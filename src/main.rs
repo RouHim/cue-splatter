@@ -2,6 +2,7 @@ use argh::FromArgs;
 use chardet::charset2encoding;
 use encoding::DecoderTrap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use levenshtein::levenshtein;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -16,9 +17,9 @@ struct CliArgs {
     #[argh(switch)]
     dry_run: bool,
 
-    /// tolerate case differences in audio file paths defined in cue files
+    /// tolerate audio file named inaccuracy
     #[argh(switch)]
-    tolerate_audio_file_path_case: bool,
+    tolerate_audio_file_inaccuracy: bool,
 
     /// delete the original audio file
     #[argh(switch)]
@@ -72,9 +73,9 @@ fn main() {
     let_user_verify_cue_files(&cue_file_paths);
 
     let cue_sheets: Vec<CueSheet> = cue_file_paths
-        .par_iter()
+        .iter()
         .flat_map(parse_cue_file)
-        .map(|cue_sheet| verify_cue_files(cue_sheet, cli_args.tolerate_audio_file_path_case))
+        .map(|cue_sheet| verify_cue_files(cue_sheet, cli_args.tolerate_audio_file_inaccuracy))
         .collect();
 
     let tracks: Vec<Track> = cue_sheets.iter().flat_map(build_ffmpeg_commands).collect();
@@ -189,18 +190,10 @@ fn run_ffmpeg_split_command(track: &Track) {
     }
 }
 
-fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_path_case: bool) -> CueSheet {
+fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -> CueSheet {
     let mut cue_sheet = cue_sheet.clone();
 
-    // FIXME: add this to a global multiprogtess bar to avoid lagging
-    let spinner = ProgressBar::new_spinner()
-        .with_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner} {wide_msg}")
-                .unwrap(),
-        )
-        .with_message(format!("🔍 Verifying cue file \"{}\"", cue_sheet.file_name));
-    spinner.enable_steady_tick(Duration::from_millis(100));
+    println!("🔍 Verifying cue file \"{}\"", cue_sheet.file_name);
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -213,16 +206,16 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_path_case: bool) ->
 
     // Verify that the audio file name exists
     if !cue_sheet.audio_file_path.exists() {
-        if tolerate_audio_file_path_case {
+        println!(
+            "❌ The specified audio file was not found: {:?}",
+            cue_sheet.audio_file_path
+        );
+        if tolerate_audio_file_inaccuracy {
             fix_audio_file_path_case(&mut cue_sheet);
         } else {
-            eprintln!(
-                "❌ The specified audio file was not found: {:?}",
-                cue_sheet.audio_file_path
-            );
             std::process::exit(1);
         }
-    }
+    };
 
     // Verify that there are tracks in the cue file
     if cue_sheet.tracks.is_empty() {
@@ -257,7 +250,7 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_path_case: bool) ->
         }
     }
 
-    spinner.finish_with_message(format!("✅ Cue file \"{}\" is valid", cue_sheet.file_name));
+    println!("✅ Cue file is valid");
 
     cue_sheet
 }
@@ -269,34 +262,78 @@ fn fix_audio_file_path_case(cue_sheet: &mut CueSheet) {
     let broken_file_name = cue_sheet.audio_file_path.file_name().unwrap();
     let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
     let broken_file_name = broken_file_name.to_str().unwrap();
+    let extension = cue_sheet
+        .audio_file_path
+        .extension()
+        .unwrap()
+        .to_str()
+        .unwrap();
 
-    let audio_file_path = parent_dir.read_dir().unwrap().find(|entry| {
-        entry
-            .as_ref()
-            .unwrap()
-            .file_name()
-            .to_str()
-            .unwrap()
-            .eq_ignore_ascii_case(broken_file_name)
-    });
+    let audio_files_in_same_dir: Vec<(PathBuf, usize)> = parent_dir
+        .read_dir()
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().unwrap().is_file())
+        // Find all audio files in the same directory
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .unwrap_or("".as_ref())
+                .eq_ignore_ascii_case(extension)
+        })
+        .map(|entry| entry.path())
+        // Calculate the levenshtein distance between the broken file name and the actual file name
+        .map(|audio_entry| {
+            let entry_file_name = audio_entry.file_name();
+            (
+                audio_entry.clone(),
+                levenshtein(broken_file_name, entry_file_name.unwrap().to_str().unwrap()),
+            )
+        })
+        .collect();
 
-    // If any case-insensitive match was found, update the audio file path
-    // This inaccuracy is due to the fact that the cue file may contain a different case
-    // Primary use case: Windows file system
-    if let Some(Ok(audio_file_path)) = audio_file_path {
-        println!(
-            "🔧 Fixed audio file path case: {:?} -> {:?}",
-            cue_sheet.audio_file_path.file_name(),
-            audio_file_path.file_name()
-        );
-        cue_sheet.audio_file_path = audio_file_path.path();
-    } else {
+    if audio_files_in_same_dir.is_empty() {
         eprintln!(
             "❌ The specified audio file was not found: {:?}",
             cue_sheet.audio_file_path
         );
         std::process::exit(1);
+    };
+
+    let best_match = audio_files_in_same_dir
+        .iter()
+        .min_by_key(|(_, distance)| *distance)
+        .unwrap();
+
+    let best_match_file_name = best_match.0.file_name().unwrap();
+    // transform distance to success rate (0 = no match, 100 = perfect match)
+    println!("{:?}", best_match);
+    let success_rate = 100 - (best_match.1 * 100 / broken_file_name.len());
+
+    // Ask user if this is ok
+    println!("🔧 Found a similar audio file in the same directory:",);
+    println!(
+        "\t{:?} -> {:?} ({}%)",
+        cue_sheet.audio_file_path.file_name().unwrap(),
+        best_match_file_name,
+        success_rate
+    );
+    println!("🔧 Do you want to use this file instead? (Y/n)");
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+    if !input.trim().is_empty() && !input.trim().eq_ignore_ascii_case("y") {
+        println!("🚪 Exiting ...");
+        std::process::exit(0);
     }
+
+    println!(
+        "✅ Fixed audio file path case: {:?} -> {:?}",
+        cue_sheet.audio_file_path.file_name().unwrap(),
+        best_match_file_name
+    );
+    cue_sheet.audio_file_path = best_match.0.clone();
 }
 
 /// Finds all cue files in the given input path
@@ -438,7 +475,7 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
 }
 
 fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
-    println!("📖 Parsing cue file {}", cue_file_path.display());
+    println!("📖 Parsing cue file \"{}\"", cue_file_path.display());
 
     let file = File::open(cue_file_path).unwrap();
 
