@@ -8,3 +8,4 @@ chardet = "0.2.4"
 encoding = "0.2.33"
 rayon = "1.10"
 indicatif = { version = "0.17", features = ["rayon", "improved_unicode"] }
+argh = "0.1"
