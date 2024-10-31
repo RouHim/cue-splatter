@@ -1,9 +1,10 @@
 use argh::FromArgs;
 use chardet::charset2encoding;
-use colour::{blue_ln, red_ln, yellow_ln};
+use colour::{blue_ln, green_ln, red_ln, yellow_ln};
 use encoding::DecoderTrap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use std::cmp::{Ordering, PartialEq, PartialOrd};
 use std::fs::{DirEntry, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -50,11 +51,19 @@ struct Track {
     ffmpeg_command: Option<String>,
 }
 
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone, PartialEq)]
 struct CueDuration {
     minutes: u32,
     seconds: u32,
     frames: u32,
+}
+
+impl PartialOrd for CueDuration {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let self_frames = self.minutes * 60 * 75 + self.seconds * 75 + self.frames;
+        let other_frames = other.minutes * 60 * 75 + other.seconds * 75 + other.frames;
+        Some(self_frames.cmp(&other_frames))
+    }
 }
 
 fn main() {
@@ -283,6 +292,7 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
         std::process::exit(1);
     }
 
+    // Verify that all tracks have a start time
     for track in &cue_sheet.tracks {
         if track.start_time.is_none() {
             eprintln!("❌ No start time found for track {}", track.number);
@@ -290,9 +300,31 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
         }
     }
 
+    // Verify that track start time is strictly monotonic growing
+    for (i, track) in cue_sheet.tracks.iter().enumerate() {
+        if i > 0 {
+            let previous_track = &cue_sheet.tracks[i - 1];
+            if track.start_time.unwrap() <= previous_track.start_time.unwrap() {
+                eprintln!("❌ Track start time is not strictly monotonic growing: Track {} starts at {:?}, but previous track starts at {:?}", track.number, track.start_time.unwrap(), previous_track.start_time.unwrap());
+                eprintln!(
+                    "❌ Most likely the cue file is not valid: \"{}\"",
+                    cue_sheet.cue_file_path.display()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
     println!("✅ Cue file is valid");
+    println!();
 
     cue_sheet
+}
+
+#[derive(Debug, Clone, PartialOrd, PartialEq)]
+enum UserDefaultAction {
+    Yes,
+    No,
 }
 
 /// Fixes the audio file reference in the cue sheet
@@ -314,18 +346,36 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
 
     // Ask user if this is ok
     println!("🔧 Found a similar audio file in the same directory:",);
+    let score = best_match.1;
+
     println!(
         "\t{:?} -> {:?} ({}%)",
         cue_sheet.audio_file_path.file_name().unwrap(),
         best_match_file_name,
-        best_match.1
+        score
     );
-    println!();
-    blue_ln!("🔧 Do you want to use this file instead? (Y/n)");
+
+    let default_action: UserDefaultAction = if score > 90 {
+        green_ln!("🔧 Do you want to use this file instead? (Y/n)");
+        UserDefaultAction::Yes
+    } else if score > 70 {
+        yellow_ln!("🔧 Do you want to use this file instead? (Y/n)");
+        UserDefaultAction::Yes
+    } else {
+        red_ln!("🔧 Do you want to use this file instead? (y/N)");
+        UserDefaultAction::No
+    };
 
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).unwrap();
-    if !input.trim().is_empty() && !input.trim().eq_ignore_ascii_case("y") {
+
+    let cancel_process = match input.trim() {
+        "y" | "Y" => false,
+        "n" | "N" => true,
+        _ => default_action == UserDefaultAction::No,
+    };
+
+    if cancel_process {
         red_ln!("❌ The referenced audio file was not found; please fix the cue file first:");
         println!("{}", cue_sheet.cue_file_path.display());
         println!("🚪 Exiting ...");
@@ -706,7 +756,10 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
 }
 
 fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
+    println!();
+    println!("============================================================");
     println!("📖 Parsing cue file \"{}\"", cue_file_path.display());
+    println!("============================================================");
 
     let file = File::open(cue_file_path).unwrap();
 
