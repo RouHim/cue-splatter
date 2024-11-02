@@ -62,6 +62,12 @@ struct CueDuration {
     frames: u32,
 }
 
+#[derive(Debug, Clone, PartialOrd, PartialEq)]
+enum UserDefaultAction {
+    Yes,
+    No,
+}
+
 impl PartialOrd for CueDuration {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         let self_frames = self.minutes * 60 * 75 + self.seconds * 75 + self.frames;
@@ -78,14 +84,17 @@ fn main() {
 
     check_tools(vec!["ffmpeg", "ffprobe"]);
 
+    // Find cue files
     let cue_file_paths = cli_args
         .cue_file_or_folders
         .iter()
         .flat_map(|input_path| find_cue_files(Path::new(input_path)))
         .collect();
 
+    // Show cue files to user
     let_user_verify_cue_files(&cue_file_paths);
 
+    // Verify cue files
     let cue_sheets: Vec<CueSheet> = cue_file_paths
         .iter()
         .flat_map(parse_cue_file)
@@ -101,41 +110,23 @@ fn main() {
             }
         }
     } else {
-        splitting_tracks(&cue_sheets);
+        println!();
 
-        //write_audio_metadata_to_tracks(&cue_sheets);
+        // Split tracks and write metadata
+        let failed_tracks = run_ffmpeg_split_commands(&cue_sheets);
+        if failed_tracks.is_empty() {
+            println!("🎉 All tracks have been splitted");
 
-        if cli_args.cleanup_files {
-            cleanup_files(cue_sheets);
+            // Cleanup files
+            if cli_args.cleanup_files {
+                cleanup_files(cue_sheets);
+            }
+        } else {
+            report_failed_tracks(failed_tracks);
         }
     }
 
     println!("🚪 Everything done, exiting ...");
-}
-
-fn write_audio_metadata_to_tracks(cue_sheets: &[CueSheet]) {
-    let total_tracks: usize = cue_sheets
-        .iter()
-        .map(|cue_sheet| cue_sheet.tracks.len())
-        .sum();
-    let simple_progress_bar = ProgressBar::new(total_tracks as u64)
-        .with_style(
-            ProgressStyle::default_bar()
-                .template("{msg}: {pos}/{len}")
-                .unwrap(),
-        )
-        .with_message("📝 Writing metadata to tracks");
-
-    cue_sheets
-        .iter()
-        .flat_map(|cue_sheet| cue_sheet.tracks.iter().map(move |track| (cue_sheet, track)))
-        .par_bridge()
-        .for_each(|(cue_sheet, track)| {
-            write_audio_metadata_to_track(cue_sheet, track);
-            simple_progress_bar.inc(1);
-        });
-
-    simple_progress_bar.finish_and_clear();
 }
 
 fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, String) {
@@ -143,7 +134,10 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, 
 
     let tagged_file = lofty::read_from_path(output_file_path);
     if tagged_file.is_err() {
-        return (false, format!("❌ Could not read file {}", output_file_path.display()));
+        return (
+            false,
+            format!("❌ Could not read file {}", output_file_path.display()),
+        );
     }
     let mut tagged_file = tagged_file.unwrap();
 
@@ -168,7 +162,7 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, 
     primary_tag
         .save_to_path(output_file_path, WriteOptions::default())
         .unwrap();
-    
+
     (true, "".to_string())
 }
 
@@ -203,18 +197,6 @@ fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
     }
 }
 
-fn splitting_tracks(cue_sheets: &[CueSheet]) {
-    println!();
-
-    let failed_tracks = run_ffmpeg_split_commands(cue_sheets);
-
-    if failed_tracks.is_empty() {
-        println!("🎉 All tracks have been splitted");
-    } else {
-        report_failed_tracks(failed_tracks);
-    }
-}
-
 fn report_failed_tracks(failed_tracks: Vec<(Track, String)>) {
     println!("❌ Failed to split the following tracks:");
     for (track, error_message) in failed_tracks {
@@ -226,8 +208,11 @@ fn report_failed_tracks(failed_tracks: Vec<(Track, String)>) {
 }
 
 fn run_ffmpeg_split_commands(cue_sheets: &[CueSheet]) -> Vec<(Track, String)> {
-    let total_track_count = cue_sheets.iter().map(|cue_sheet| cue_sheet.tracks.len() as u64).sum();
-    
+    let total_track_count = cue_sheets
+        .iter()
+        .map(|cue_sheet| cue_sheet.tracks.len() as u64)
+        .sum();
+
     let multi_progress_bar = MultiProgress::new();
     let mp_progress_bar = multi_progress_bar.add(
         ProgressBar::new(total_track_count)
@@ -248,29 +233,44 @@ fn run_ffmpeg_split_commands(cue_sheets: &[CueSheet]) -> Vec<(Track, String)> {
         .flat_map(|cue_sheet| cue_sheet.tracks.iter().map(move |track| (cue_sheet, track)))
         .par_bridge()
         .for_each(|(cue_sheet, track)| {
-            let split_command_bar = create_spinner(&multi_progress_bar, track);
-
-            // Run the actual ffmpeg command
-            let (is_ok, error_message) = run_ffmpeg_split_command(track);
-            if is_ok {
-                let (is_ok, error_message) = write_audio_metadata_to_track(cue_sheet, track);
-                if !is_ok {
-                    failed_tracks.write().unwrap().push((track.clone(), error_message));
-                }
-            } else {
-                failed_tracks
-                    .write()
-                    .unwrap()
-                    .push((track.clone(), error_message));
-            }
-
-            split_command_bar.finish_and_clear();
+            split_track(&multi_progress_bar, &failed_tracks, cue_sheet, track);
             mp_progress_bar.inc(1);
         });
 
     mp_progress_bar.finish_and_clear();
 
     failed_tracks.into_inner().unwrap()
+}
+
+fn split_track(
+    multi_progress_bar: &MultiProgress,
+    failed_tracks: &RwLock<Vec<(Track, String)>>,
+    cue_sheet: &CueSheet,
+    track: &Track,
+) {
+    let split_command_bar = create_spinner(multi_progress_bar, track);
+
+    // Run ffmpeg split command
+    let (is_ok, error_message) = run_ffmpeg_split_command(track);
+
+    if is_ok {
+        // Write metadata to track
+        let (is_ok, error_message) = write_audio_metadata_to_track(cue_sheet, track);
+
+        if !is_ok {
+            failed_tracks
+                .write()
+                .unwrap()
+                .push((track.clone(), error_message));
+        }
+    } else {
+        failed_tracks
+            .write()
+            .unwrap()
+            .push((track.clone(), error_message));
+    }
+
+    split_command_bar.finish_and_clear();
 }
 
 fn create_spinner(multi_progress_bar: &MultiProgress, track: &Track) -> ProgressBar {
@@ -309,12 +309,12 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
         .output()
         .expect("Failed to execute command");
 
-    if !output.status.success() {
+    if output.status.success() {
+        (true, "".to_string())
+    } else {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         (false, format!("{}\n{}", stdout, stderr))
-    } else {
-        (true, "".to_string())
     }
 }
 
@@ -402,12 +402,6 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
     println!();
 
     cue_sheet
-}
-
-#[derive(Debug, Clone, PartialOrd, PartialEq)]
-enum UserDefaultAction {
-    Yes,
-    No,
 }
 
 /// Fixes the audio file reference in the cue sheet
