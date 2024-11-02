@@ -3,7 +3,10 @@ use chardet::charset2encoding;
 use colour::{blue_ln, green_ln, red_ln, yellow_ln};
 use encoding::DecoderTrap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use lofty::config::WriteOptions;
+use lofty::file::TaggedFileExt;
+use lofty::tag::{Accessor, Tag, TagExt};
+use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use std::cmp::{Ordering, PartialEq, PartialOrd};
 use std::fs::{DirEntry, File};
 use std::io::{BufReader, Read};
@@ -38,6 +41,8 @@ struct CueSheet {
     cue_file_path: PathBuf,
     audio_file_path: PathBuf,
     file_name: String,
+    performer: Option<String>,
+    title: Option<String>,
     tracks: Vec<Track>,
 }
 
@@ -86,25 +91,93 @@ fn main() {
         .iter()
         .flat_map(parse_cue_file)
         .map(|cue_sheet| verify_cue_files(cue_sheet, cli_args.tolerate_audio_file_inaccuracy))
+        .map(augment_with_ffmpeg_commands)
         .collect();
 
-    let tracks: Vec<Track> = cue_sheets.iter().flat_map(build_ffmpeg_commands).collect();
-
-    splitting_tracks(tracks, cli_args.dry_run);
-
-    if !cli_args.dry_run && cli_args.cleanup_files {
-        println!("🗑 Cleaning up original audio file and cue file ...");
-        for cue_file in cue_sheets {
-            println!("\t{}", cue_file.audio_file_path.display());
-            std::fs::remove_file(cue_file.audio_file_path).unwrap();
-
-            println!("\t{}", cue_file.cue_file_path.display());
-            std::fs::remove_file(cue_file.cue_file_path).unwrap();
-
-            println!();
+    if cli_args.dry_run {
+        println!("🚀 Dry run, only printing ffmpeg commands");
+        for cue_sheet in &cue_sheets {
+            for track in &cue_sheet.tracks {
+                println!("{}", track.ffmpeg_command.as_ref().unwrap());
+            }
         }
-        println!("🎉 All files have been cleaned up");
+    } else {
+        splitting_tracks(&cue_sheets);
+
+        write_audio_metadata_to_tracks(&cue_sheets);
+
+        if cli_args.cleanup_files {
+            cleanup_files(cue_sheets);
+        }
     }
+
+    println!("🚪 Everything done, exiting ...");
+}
+
+fn write_audio_metadata_to_tracks(cue_sheets: &Vec<CueSheet>) {
+    let total_tracks: usize = cue_sheets
+        .iter()
+        .map(|cue_sheet| cue_sheet.tracks.len())
+        .sum();
+    let simple_progress_bar = ProgressBar::new(total_tracks as u64)
+        .with_style(
+            ProgressStyle::default_bar()
+                .template("{msg}: {pos}/{len}")
+                .unwrap(),
+        )
+        .with_message("📝 Writing metadata to tracks");
+
+    cue_sheets
+        .iter()
+        .flat_map(|cue_sheet| cue_sheet.tracks.iter().map(move |track| (cue_sheet, track)))
+        .par_bridge()
+        .for_each(|(cue_sheet, track)| {
+            write_audio_metadata_to_track(cue_sheet, track);
+            simple_progress_bar.inc(1);
+        });
+
+    simple_progress_bar.finish_and_clear();
+}
+
+fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) {
+    let output_file_path = track.output_file.as_ref().unwrap();
+
+    let mut tagged_file = lofty::read_from_path(output_file_path).unwrap();
+    let primary_tag = match tagged_file.primary_tag_mut() {
+        Some(primary_tag) => primary_tag,
+        None => {
+            if let Some(first_tag) = tagged_file.first_tag_mut() {
+                first_tag
+            } else {
+                let tag_type = tagged_file.primary_tag_type();
+                tagged_file.insert_tag(Tag::new(tag_type));
+                tagged_file.primary_tag_mut().unwrap()
+            }
+        }
+    };
+
+    primary_tag.set_album(cue_sheet.title.as_ref().unwrap().to_string());
+    primary_tag.set_track(track.number);
+    primary_tag.set_title(track.title.as_ref().unwrap().to_string());
+    primary_tag.set_artist(track.artist.as_ref().unwrap().to_string());
+
+    primary_tag
+        .save_to_path(output_file_path, WriteOptions::default())
+        .unwrap();
+}
+
+fn cleanup_files(cue_sheets: Vec<CueSheet>) {
+    println!("🗑 Cleaning up original audio file and cue file ...");
+    for cue_file in cue_sheets {
+        println!("\t{}", cue_file.audio_file_path.display());
+        std::fs::remove_file(cue_file.audio_file_path).unwrap();
+
+        println!("\t{}", cue_file.cue_file_path.display());
+        std::fs::remove_file(cue_file.cue_file_path).unwrap();
+
+        println!();
+    }
+    println!("🎉 All files have been cleaned up");
 }
 
 fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
@@ -124,22 +197,15 @@ fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
     }
 }
 
-fn splitting_tracks(tracks: Vec<Track>, dry_run: bool) {
-    if dry_run {
-        println!("🚀 Dry run, only printing ffmpeg commands");
-        for track in tracks {
-            println!("{}", track.ffmpeg_command.unwrap_or("".to_string()));
-        }
+fn splitting_tracks(cue_sheets: &Vec<CueSheet>) {
+    println!();
+
+    let failed_tracks = run_ffmpeg_split_commands(cue_sheets);
+
+    if failed_tracks.is_empty() {
+        println!("🎉 All tracks have been splitted");
     } else {
-        println!();
-
-        let failed_tracks = run_ffmpeg_split_commands(tracks);
-
-        if failed_tracks.is_empty() {
-            println!("🎉 All tracks have been splitted");
-        } else {
-            report_failed_tracks(failed_tracks);
-        }
+        report_failed_tracks(failed_tracks);
     }
 }
 
@@ -153,7 +219,12 @@ fn report_failed_tracks(failed_tracks: Vec<(Track, String)>) {
     }
 }
 
-fn run_ffmpeg_split_commands(tracks: Vec<Track>) -> Vec<(Track, String)> {
+fn run_ffmpeg_split_commands(cue_sheets: &Vec<CueSheet>) -> Vec<(Track, String)> {
+    let tracks = cue_sheets
+        .iter()
+        .flat_map(|cue_sheet| cue_sheet.tracks.clone())
+        .collect::<Vec<Track>>();
+
     let multi_progress_bar = MultiProgress::new();
     let mp_progress_bar = multi_progress_bar.add(
         ProgressBar::new(tracks.len() as u64)
@@ -662,13 +733,19 @@ fn check_tools(commands: Vec<&str>) {
     }
 }
 
-fn build_ffmpeg_commands(cue_sheet: &CueSheet) -> Vec<Track> {
-    cue_sheet
+fn augment_with_ffmpeg_commands(cue_sheet: CueSheet) -> CueSheet {
+    let mut cue_sheet = cue_sheet.clone();
+
+    let augmented_tracks: Vec<Track> = cue_sheet
         .tracks
         .iter()
         .enumerate()
-        .map(|(index, track)| build_ffmpeg_command(cue_sheet, index, track))
-        .collect()
+        .map(|(index, track)| build_ffmpeg_command(&cue_sheet, index, track))
+        .collect();
+
+    cue_sheet.tracks = augmented_tracks;
+
+    cue_sheet
 }
 
 fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Track {
@@ -766,6 +843,8 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
     let mut file_name = String::new();
     let mut tracks = Vec::new();
     let mut current_track = None;
+    let mut performer = None;
+    let mut title = None;
 
     let cue_file_content = read_cue_file_content(cue_file_path, file);
 
@@ -798,6 +877,8 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             "TITLE" => {
                 if let Some(ref mut track) = current_track {
                     track.title = Some(tokens[1..].join(" ").replace("\"", ""));
+                } else {
+                    title = Some(tokens[1..].join(" ").replace("\"", ""));
                 }
             }
             "INDEX" => {
@@ -816,6 +897,8 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             "PERFORMER" => {
                 if let Some(ref mut track) = current_track {
                     track.artist = Some(tokens[1..].join(" ").replace("\"", ""));
+                } else {
+                    performer = Some(tokens[1..].join(" ").replace("\"", ""));
                 }
             }
             _ => {}
@@ -829,6 +912,8 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
     Some(CueSheet {
         file_name: file_name.clone(),
         cue_file_path: cue_file_path.to_path_buf(),
+        performer,
+        title,
         audio_file_path: cue_file_path
             .to_path_buf()
             .parent()

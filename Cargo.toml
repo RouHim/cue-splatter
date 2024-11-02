@@ -4,13 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-chardet = "0.2.4"
-encoding = "0.2.33"
-rayon = "1.10"
-indicatif = { version = "0.17", features = ["rayon", "improved_unicode"] }
-argh = "0.1"
-levenshtein = "1.0.5"
-colour = "2.0"
+chardet = "0.2.4"# Detects the encoding of a byte stream
+encoding = "0.2.33"# Character encoding support
+rayon = "1.10"# Data parallelism library
+indicatif = { version = "0.17", features = ["rayon", "improved_unicode"] } # Progress bar
+argh = "0.1" # A simple argument parser
+levenshtein = "1.0.5"# Levenshtein distance
+colour = "2.0"# Terminal colours
+lofty = "0.21.1" # En/decode audio file metadata
 
 [profile.release]
 panic = "abort" # Strip expensive panic clean-up logic
