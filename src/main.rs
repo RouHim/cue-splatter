@@ -321,10 +321,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -> CueSheet {
     let mut cue_sheet = cue_sheet.clone();
 
-    println!(
-        "🔍 Verifying cue file \"{}\"",
-        cue_sheet.cue_file_path.display()
-    );
+    println!("🔍 Verifying cue file",);
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -840,9 +837,9 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
 
 fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
     println!();
+    println!("{}", cue_file_path.display());
     println!("============================================================");
-    println!("📖 Parsing cue file \"{}\"", cue_file_path.display());
-    println!("============================================================");
+    println!("📖 Parsing cue file");
 
     let file = File::open(cue_file_path).unwrap();
 
@@ -911,6 +908,8 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
     if let Some(track) = current_track {
         tracks.push(track);
     }
+
+    println!("🎵 Found {} track(s)", tracks.len());
 
     Some(CueSheet {
         file_name: file_name.clone(),
