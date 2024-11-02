@@ -1,0 +1,7 @@
+services:
+  cue-splatter:
+    build:
+      dockerfile: Containerfile
+    image: docker.io/rouhim/cue-splatter:latest
+    volumes:
+      - ./test-data:/test-data

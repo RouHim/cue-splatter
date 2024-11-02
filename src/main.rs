@@ -41,7 +41,6 @@ struct CueSheet {
     cue_file_path: PathBuf,
     audio_file_path: PathBuf,
     file_name: String,
-    performer: Option<String>,
     title: Option<String>,
     tracks: Vec<Track>,
 }
@@ -104,7 +103,7 @@ fn main() {
     } else {
         splitting_tracks(&cue_sheets);
 
-        write_audio_metadata_to_tracks(&cue_sheets);
+        //write_audio_metadata_to_tracks(&cue_sheets);
 
         if cli_args.cleanup_files {
             cleanup_files(cue_sheets);
@@ -114,7 +113,7 @@ fn main() {
     println!("🚪 Everything done, exiting ...");
 }
 
-fn write_audio_metadata_to_tracks(cue_sheets: &Vec<CueSheet>) {
+fn write_audio_metadata_to_tracks(cue_sheets: &[CueSheet]) {
     let total_tracks: usize = cue_sheets
         .iter()
         .map(|cue_sheet| cue_sheet.tracks.len())
@@ -139,10 +138,15 @@ fn write_audio_metadata_to_tracks(cue_sheets: &Vec<CueSheet>) {
     simple_progress_bar.finish_and_clear();
 }
 
-fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) {
+fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, String) {
     let output_file_path = track.output_file.as_ref().unwrap();
 
-    let mut tagged_file = lofty::read_from_path(output_file_path).unwrap();
+    let tagged_file = lofty::read_from_path(output_file_path);
+    if tagged_file.is_err() {
+        return (false, format!("❌ Could not read file {}", output_file_path.display()));
+    }
+    let mut tagged_file = tagged_file.unwrap();
+
     let primary_tag = match tagged_file.primary_tag_mut() {
         Some(primary_tag) => primary_tag,
         None => {
@@ -164,6 +168,8 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) {
     primary_tag
         .save_to_path(output_file_path, WriteOptions::default())
         .unwrap();
+    
+    (true, "".to_string())
 }
 
 fn cleanup_files(cue_sheets: Vec<CueSheet>) {
@@ -197,7 +203,7 @@ fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
     }
 }
 
-fn splitting_tracks(cue_sheets: &Vec<CueSheet>) {
+fn splitting_tracks(cue_sheets: &[CueSheet]) {
     println!();
 
     let failed_tracks = run_ffmpeg_split_commands(cue_sheets);
@@ -219,15 +225,12 @@ fn report_failed_tracks(failed_tracks: Vec<(Track, String)>) {
     }
 }
 
-fn run_ffmpeg_split_commands(cue_sheets: &Vec<CueSheet>) -> Vec<(Track, String)> {
-    let tracks = cue_sheets
-        .iter()
-        .flat_map(|cue_sheet| cue_sheet.tracks.clone())
-        .collect::<Vec<Track>>();
-
+fn run_ffmpeg_split_commands(cue_sheets: &[CueSheet]) -> Vec<(Track, String)> {
+    let total_track_count = cue_sheets.iter().map(|cue_sheet| cue_sheet.tracks.len() as u64).sum();
+    
     let multi_progress_bar = MultiProgress::new();
     let mp_progress_bar = multi_progress_bar.add(
-        ProgressBar::new(tracks.len() as u64)
+        ProgressBar::new(total_track_count)
             .with_style(
                 ProgressStyle::default_bar()
                     .template("{msg}: {pos}/{len}")
@@ -240,21 +243,30 @@ fn run_ffmpeg_split_commands(cue_sheets: &Vec<CueSheet>) -> Vec<(Track, String)>
     // Collect failed tracks in a vec
     let failed_tracks: RwLock<Vec<(Track, String)>> = RwLock::new(Vec::new());
 
-    tracks.par_iter().for_each(|track| {
-        let split_command_bar = create_spinner(&multi_progress_bar, track);
+    cue_sheets
+        .iter()
+        .flat_map(|cue_sheet| cue_sheet.tracks.iter().map(move |track| (cue_sheet, track)))
+        .par_bridge()
+        .for_each(|(cue_sheet, track)| {
+            let split_command_bar = create_spinner(&multi_progress_bar, track);
 
-        // Run the actual ffmpeg command
-        let (is_ok, error_message) = run_ffmpeg_split_command(track);
-        if !is_ok {
-            failed_tracks
-                .write()
-                .unwrap()
-                .push((track.clone(), error_message));
-        }
+            // Run the actual ffmpeg command
+            let (is_ok, error_message) = run_ffmpeg_split_command(track);
+            if is_ok {
+                let (is_ok, error_message) = write_audio_metadata_to_track(cue_sheet, track);
+                if !is_ok {
+                    failed_tracks.write().unwrap().push((track.clone(), error_message));
+                }
+            } else {
+                failed_tracks
+                    .write()
+                    .unwrap()
+                    .push((track.clone(), error_message));
+            }
 
-        split_command_bar.finish_and_clear();
-        mp_progress_bar.inc(1);
-    });
+            split_command_bar.finish_and_clear();
+            mp_progress_bar.inc(1);
+        });
 
     mp_progress_bar.finish_and_clear();
 
@@ -843,7 +855,6 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
     let mut file_name = String::new();
     let mut tracks = Vec::new();
     let mut current_track = None;
-    let mut performer = None;
     let mut title = None;
 
     let cue_file_content = read_cue_file_content(cue_file_path, file);
@@ -897,8 +908,6 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             "PERFORMER" => {
                 if let Some(ref mut track) = current_track {
                     track.artist = Some(tokens[1..].join(" ").replace("\"", ""));
-                } else {
-                    performer = Some(tokens[1..].join(" ").replace("\"", ""));
                 }
             }
             _ => {}
@@ -912,7 +921,6 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
     Some(CueSheet {
         file_name: file_name.clone(),
         cue_file_path: cue_file_path.to_path_buf(),
-        performer,
         title,
         audio_file_path: cue_file_path
             .to_path_buf()
