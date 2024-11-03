@@ -1,3 +1,5 @@
+mod updater;
+
 use argh::FromArgs;
 use chardet::charset2encoding;
 use colour::{blue_ln, green_ln, red_ln, yellow_ln};
@@ -81,6 +83,9 @@ fn main() {
     if cli_args.cue_file_or_folders.is_empty() {
         cli_args.cue_file_or_folders.push(".".to_string());
     }
+
+    // Check for updates, if available, update the binary and restart
+    updater::update();
 
     check_tools(vec!["ffmpeg", "ffprobe"]);
 
