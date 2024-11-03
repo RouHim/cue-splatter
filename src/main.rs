@@ -408,12 +408,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     let broken_file_name = cue_sheet.audio_file_path.file_name().unwrap();
     let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
     let broken_file_name = broken_file_name.to_str().unwrap();
-    let extension = cue_sheet
-        .audio_file_path
-        .extension()
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let extension = cue_sheet.file_name.split('.').last().unwrap();
 
     let best_match = find_best_match(cue_sheet, parent_dir, broken_file_name, extension);
     let best_match_file_name = best_match.0.file_name().unwrap();
