@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/RouHim/cue-splatter/compare/1.0.0...1.1.0) (2024-11-04)
+
+
+### Features
+
+* clear audiometadata before writing / cleanup track title ([892b1a8](https://github.com/RouHim/cue-splatter/commit/892b1a8f809dbeb969f9f0ba03d01bed1ee7de06))
+
 # 1.0.0 (2024-11-03)
 
 
