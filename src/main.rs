@@ -136,12 +136,15 @@ fn main() {
 
 fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, String) {
     let output_file_path = track.output_file.as_ref().unwrap();
-
     let tagged_file = lofty::read_from_path(output_file_path);
     if tagged_file.is_err() {
         return (
             false,
-            format!("❌ Could not read file {}", output_file_path.display()),
+            format!(
+                "❌ Could not read file {}\n{}",
+                output_file_path.display(),
+                tagged_file.err().unwrap()
+            ),
         );
     }
     let mut tagged_file = tagged_file.unwrap();
@@ -159,10 +162,16 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, 
         }
     };
 
-    primary_tag.set_album(cue_sheet.title.as_ref().unwrap().to_string());
     primary_tag.set_track(track.number);
-    primary_tag.set_title(track.title.as_ref().unwrap().to_string());
-    primary_tag.set_artist(track.artist.as_ref().unwrap().to_string());
+    if let Some(ref album) = cue_sheet.title {
+        primary_tag.set_album(album.to_string());
+    }
+    if let Some(ref title) = track.title {
+        primary_tag.set_title(title.to_string());
+    }
+    if let Some(ref artist) = track.artist {
+        primary_tag.set_artist(artist.to_string());
+    }
 
     primary_tag
         .save_to_path(output_file_path, WriteOptions::default())
@@ -204,10 +213,15 @@ fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
 
 fn report_failed_tracks(failed_tracks: Vec<(Track, String)>) {
     println!("❌ Failed to split the following tracks:");
+    println!();
     for (track, error_message) in failed_tracks {
+        println!("\tArtist: {:?}", track.artist);
+        println!("\tTitle: {:?}", track.title);
         println!("\tCommand: {}", track.ffmpeg_command.unwrap());
         println!("\tOutput file: {}", track.output_file.unwrap().display());
         println!("\tError message: {}", error_message);
+        println!();
+        println!();
         println!();
     }
 }
@@ -788,7 +802,7 @@ fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Tr
     let audio_file_path = cue_sheet.audio_file_path.to_str().unwrap();
 
     let command = format!(
-        "ffmpeg -i \"{}\" -acodec copy -ss \"{}\" {} \"{}\"",
+        "ffmpeg -y -i \"{}\" -map_metadata -1 -acodec copy -ss \"{}\" {} \"{}\"",
         audio_file_path, ffmpeg_start_time, ffmpeg_end_time, output_file_name
     );
 
@@ -821,7 +835,7 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
 
     // Create a filename for each track
     let track_number = format!("{:02}", track.number);
-    let track_title = if let Some(ref title) = track.title {
+    let mut track_title = if let Some(ref title) = track.title {
         if let Some(ref artist) = track.artist {
             format!("{} - {}", artist, title)
         } else {
@@ -830,6 +844,16 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
     } else {
         "Unknown".to_string()
     };
+
+    // Replace invalid characters
+    track_title = track_title
+        .replace("/", "-")
+        .replace("\\", "-")
+        .replace(":", "-")
+        .replace("`", "'")
+        .trim()
+        .to_string();
+
     let filename = format!("{} {}", track_number, track_title);
 
     format!("{}/{}.{}", sub_dir, filename, extension)
@@ -878,9 +902,9 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             }
             "TITLE" => {
                 if let Some(ref mut track) = current_track {
-                    track.title = Some(tokens[1..].join(" ").replace("\"", ""));
+                    track.title = Some(tokens[1..].join(" ").replace("\"", "").trim().to_string());
                 } else {
-                    title = Some(tokens[1..].join(" ").replace("\"", ""));
+                    title = Some(tokens[1..].join(" ").replace("\"", "").trim().to_string());
                 }
             }
             "INDEX" => {
@@ -898,7 +922,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             }
             "PERFORMER" => {
                 if let Some(ref mut track) = current_track {
-                    track.artist = Some(tokens[1..].join(" ").replace("\"", ""));
+                    track.artist = Some(tokens[1..].join(" ").replace("\"", "").trim().to_string());
                 }
             }
             _ => {}
