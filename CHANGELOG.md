@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/RouHim/cue-splatter/compare/1.1.0...1.1.1) (2024-11-04)
+
+
+### Bug Fixes
+
+* version number ([2c6e1b8](https://github.com/RouHim/cue-splatter/commit/2c6e1b86ad92632d2ad5ac804aa19c5ac76b23de))
+
 # [1.1.0](https://github.com/RouHim/cue-splatter/compare/1.0.0...1.1.0) (2024-11-04)
 
 
