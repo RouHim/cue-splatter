@@ -1,4 +1,4 @@
-FROM alpine:3
+FROM alpine:20240807
 
 RUN apk update && apk add --no-cache ffmpeg
 
