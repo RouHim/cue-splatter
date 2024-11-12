@@ -449,10 +449,10 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
         score
     );
 
-    let default_action: UserDefaultAction = if score > 90 {
+    let default_action: UserDefaultAction = if score > 80 {
         green_ln!("🔧 Do you want to use this file instead? (Y/n)");
         UserDefaultAction::Yes
-    } else if score > 70 {
+    } else if score > 50 {
         yellow_ln!("🔧 Do you want to use this file instead? (Y/n)");
         UserDefaultAction::Yes
     } else {
