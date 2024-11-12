@@ -427,12 +427,15 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
 /// This happens e.g. when the case of the audio file path in the cue sheet does not match the actual file path
 /// This is a common issue on Windows file systems
 fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
-    let broken_file_name = cue_sheet.audio_file_path.file_name().unwrap();
+    let broken_file_name = cue_sheet
+        .audio_file_path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
     let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
-    let broken_file_name = broken_file_name.to_str().unwrap();
-    let extension = cue_sheet.audio_file_name.split('.').last().unwrap();
 
-    let best_match = find_best_match(cue_sheet, parent_dir, broken_file_name, extension);
+    let best_match = find_best_match(cue_sheet, parent_dir, broken_file_name);
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
@@ -486,7 +489,6 @@ fn find_best_match(
     cue_sheet: &CueSheet,
     parent_dir: &Path,
     broken_file_name: &str,
-    extension: &str,
 ) -> (PathBuf, usize) {
     // Find all entries in the parent directory
     let files_in_directory: Vec<DirEntry> = parent_dir
@@ -499,13 +501,6 @@ fn find_best_match(
     let audio_files_in_directory: Vec<PathBuf> = files_in_directory
         .par_iter()
         .filter(|entry| entry.file_type().unwrap().is_file())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .unwrap_or("".as_ref())
-                .eq_ignore_ascii_case(extension)
-        })
         .filter(|entry| audio_playtime_matches(entry, cue_sheet.tracks.last().unwrap()))
         .map(|entry| entry.path())
         .collect();
