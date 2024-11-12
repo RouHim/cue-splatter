@@ -1,3 +1,11 @@
+## [1.1.2](https://github.com/RouHim/cue-splatter/compare/1.1.1...1.1.2) (2024-11-12)
+
+
+### Bug Fixes
+
+* cue sheet parsing ([22160d1](https://github.com/RouHim/cue-splatter/commit/22160d1e5335cac2c1272eea0976799f0f2cdff4))
+* pipeline ([b33e764](https://github.com/RouHim/cue-splatter/commit/b33e764299b5755ef437e1ff54452e5a2a6d1fab))
+
 ## [1.1.1](https://github.com/RouHim/cue-splatter/compare/1.1.0...1.1.1) (2024-11-04)
 
 
