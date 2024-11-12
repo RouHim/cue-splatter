@@ -953,17 +953,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
 
     println!("🎵 Found {} track(s)", tracks.len());
 
-    // print all parsed props
-    println!("FILE={}", audio_file_name);
-    println!("TITLE={}", title.as_ref().unwrap());
-    for track in &tracks {
-        println!("\tTRACK={}", track.number);
-        println!("\t\tTITLE={}", track.title.as_ref().unwrap());
-        println!("\t\tARTIST={}", track.artist.as_ref().unwrap());
-        println!("\t\tINDEX={:?}", track.start_time.as_ref().unwrap());
-    }
-
-    let bla = CueSheet {
+    Some(CueSheet {
         audio_file_name: audio_file_name.clone(),
         cue_file_path: cue_file_path.to_path_buf(),
         title,
@@ -973,9 +963,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             .unwrap()
             .join(audio_file_name),
         tracks,
-    };
-
-    Some(bla)
+    })
 }
 
 fn read_cue_file_content(cue_file_path: &Path, file: File) -> String {
