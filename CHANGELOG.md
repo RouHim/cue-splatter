@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/RouHim/cue-splatter/compare/1.2.0...1.3.0) (2024-11-12)
+
+
+### Features
+
+* loose the default values ([197cfba](https://github.com/RouHim/cue-splatter/commit/197cfbadbf805ef505409f96e0203b35e6c1b100))
+
 # [1.2.0](https://github.com/RouHim/cue-splatter/compare/1.1.3...1.2.0) (2024-11-12)
 
 
