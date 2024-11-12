@@ -42,7 +42,7 @@ struct CliArgs {
 struct CueSheet {
     cue_file_path: PathBuf,
     audio_file_path: PathBuf,
-    file_name: String,
+    audio_file_name: String,
     title: Option<String>,
     tracks: Vec<Track>,
 }
@@ -366,7 +366,10 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
 
     // Verify that there are tracks in the cue file
     if cue_sheet.tracks.is_empty() {
-        eprintln!("❌ No tracks found in cue file {}", cue_sheet.file_name);
+        eprintln!(
+            "❌ No tracks found in cue file {}",
+            cue_sheet.audio_file_name
+        );
         std::process::exit(1);
     }
 
@@ -384,7 +387,7 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
     if !output.status.success() {
         eprintln!(
             "❌ ffmpeg failed to process file, most likely the file is corrupt or codec is not supported: {}\nstdout: {}\nstderr: {}",
-            cue_sheet.file_name,
+            cue_sheet.audio_file_name,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
@@ -427,7 +430,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     let broken_file_name = cue_sheet.audio_file_path.file_name().unwrap();
     let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
     let broken_file_name = broken_file_name.to_str().unwrap();
-    let extension = cue_sheet.file_name.split('.').last().unwrap();
+    let extension = cue_sheet.audio_file_name.split('.').last().unwrap();
 
     let best_match = find_best_match(cue_sheet, parent_dir, broken_file_name, extension);
     let best_match_file_name = best_match.0.file_name().unwrap();
@@ -817,20 +820,24 @@ fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Tr
 }
 
 fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
-    let extension = cue_sheet.file_name.split('.').last().unwrap_or_else(|| {
-        eprintln!(
-            "❌ Could not determine extension for file {}",
-            cue_sheet.file_name
-        );
-        std::process::exit(1);
-    });
+    let extension = cue_sheet
+        .audio_file_name
+        .split('.')
+        .last()
+        .unwrap_or_else(|| {
+            eprintln!(
+                "❌ Could not determine extension for file {}",
+                cue_sheet.audio_file_name
+            );
+            std::process::exit(1);
+        });
 
     // Create a sub dir for each cue file
     let sub_dir = cue_sheet
         .audio_file_path
         .parent()
         .unwrap()
-        .join(cue_sheet.file_name.split('.').next().unwrap());
+        .join(cue_sheet.audio_file_name.split('.').next().unwrap());
     let sub_dir = sub_dir.to_str().unwrap();
 
     // Create a filename for each track
@@ -866,31 +873,41 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
     println!("📖 Parsing cue file");
 
     let file = File::open(cue_file_path).unwrap();
+    let cue_file_content = read_cue_file_content(cue_file_path, file);
 
-    let mut file_name = String::new();
+    let mut audio_file_name = String::new();
     let mut tracks = Vec::new();
     let mut current_track = None;
     let mut title = None;
 
-    let cue_file_content = read_cue_file_content(cue_file_path, file);
-
     for line in cue_file_content.lines() {
-        let tokens: Vec<&str> = line.split_whitespace().collect();
+        let line_split = line.trim().split_once(' ').unwrap_or(("", ""));
+        let cue_line_key = line_split.0;
+        let cue_line_value = line_split.1;
 
-        if tokens.is_empty() {
+        if cue_line_key.is_empty() {
             continue;
         }
 
-        match tokens[0] {
+        match cue_line_key {
             "FILE" => {
-                file_name = tokens[1].replace("\"", "").to_string();
+                // Take only the value in quotes
+                let first_index_of_quote = cue_line_value.find('\"').unwrap();
+                let last_index_of_quote = cue_line_value.rfind('\"').unwrap();
+                audio_file_name =
+                    cue_line_value[first_index_of_quote + 1..last_index_of_quote].to_string();
             }
             "TRACK" => {
                 if let Some(track) = current_track.take() {
                     tracks.push(track);
                 }
 
-                let track_number = tokens[1].parse::<u32>().unwrap_or(0);
+                let track_number: u32 = cue_line_value
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+                    .parse()
+                    .unwrap();
                 current_track = Some(Track {
                     number: track_number,
                     title: None,
@@ -902,27 +919,28 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             }
             "TITLE" => {
                 if let Some(ref mut track) = current_track {
-                    track.title = Some(tokens[1..].join(" ").replace("\"", "").trim().to_string());
+                    track.title = Some(cue_line_value.replace("\"", "").trim().to_string());
                 } else {
-                    title = Some(tokens[1..].join(" ").replace("\"", "").trim().to_string());
+                    title = Some(cue_line_value.replace("\"", "").trim().to_string());
                 }
             }
             "INDEX" => {
-                if tokens[1] == "01" {
-                    if let Some(ref mut track) = current_track {
-                        let start_time = tokens[2].to_string();
-                        let time_split = start_time.split(":").collect::<Vec<&str>>();
-                        track.start_time = Some(CueDuration {
-                            minutes: time_split[0].parse::<u32>().unwrap(),
-                            seconds: time_split[1].parse::<u32>().unwrap(),
-                            frames: time_split[2].parse::<u32>().unwrap(),
-                        });
-                    }
+                if let Some(ref mut track) = current_track {
+                    let cue_duration = cue_line_value.split(' ').last().unwrap();
+                    let cue_duration_split: Vec<&str> = cue_duration.split(':').collect();
+                    let minutes = cue_duration_split[0].parse::<u32>().unwrap();
+                    let seconds = cue_duration_split[1].parse::<u32>().unwrap();
+                    let frames = cue_duration_split[2].parse::<u32>().unwrap();
+                    track.start_time = Some(CueDuration {
+                        minutes,
+                        seconds,
+                        frames,
+                    });
                 }
             }
             "PERFORMER" => {
                 if let Some(ref mut track) = current_track {
-                    track.artist = Some(tokens[1..].join(" ").replace("\"", "").trim().to_string());
+                    track.artist = Some(cue_line_value.replace("\"", "").trim().to_string());
                 }
             }
             _ => {}
@@ -935,17 +953,29 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
 
     println!("🎵 Found {} track(s)", tracks.len());
 
-    Some(CueSheet {
-        file_name: file_name.clone(),
+    // print all parsed props
+    println!("FILE={}", audio_file_name);
+    println!("TITLE={}", title.as_ref().unwrap());
+    for track in &tracks {
+        println!("\tTRACK={}", track.number);
+        println!("\t\tTITLE={}", track.title.as_ref().unwrap());
+        println!("\t\tARTIST={}", track.artist.as_ref().unwrap());
+        println!("\t\tINDEX={:?}", track.start_time.as_ref().unwrap());
+    }
+
+    let bla = CueSheet {
+        audio_file_name: audio_file_name.clone(),
         cue_file_path: cue_file_path.to_path_buf(),
         title,
         audio_file_path: cue_file_path
             .to_path_buf()
             .parent()
             .unwrap()
-            .join(file_name),
+            .join(audio_file_name),
         tracks,
-    })
+    };
+
+    Some(bla)
 }
 
 fn read_cue_file_content(cue_file_path: &Path, file: File) -> String {
