@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/RouHim/cue-splatter/compare/1.1.3...1.2.0) (2024-11-12)
+
+
+### Features
+
+* improve audio file detection ([af2e098](https://github.com/RouHim/cue-splatter/commit/af2e098371ec3dbe0570f33ed668caff59b1ff36))
+
 ## [1.1.3](https://github.com/RouHim/cue-splatter/compare/1.1.2...1.1.3) (2024-11-12)
 
 
