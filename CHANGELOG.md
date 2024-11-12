@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/RouHim/cue-splatter/compare/1.1.2...1.1.3) (2024-11-12)
+
+
+### Bug Fixes
+
+* remove debug code ([288b58d](https://github.com/RouHim/cue-splatter/commit/288b58d84c9dc5d302c33f313855e04dd66c45b7))
+
 ## [1.1.2](https://github.com/RouHim/cue-splatter/compare/1.1.1...1.1.2) (2024-11-12)
 
 
