@@ -1,3 +1,10 @@
+## [1.3.1](https://github.com/RouHim/cue-splatter/compare/1.3.0...1.3.1) (2024-11-13)
+
+
+### Bug Fixes
+
+* invalid time parsing ([62f4c15](https://github.com/RouHim/cue-splatter/commit/62f4c15b64121177367d3dde9df3c068fe83e827))
+
 # [1.3.0](https://github.com/RouHim/cue-splatter/compare/1.2.0...1.3.0) (2024-11-12)
 
 
