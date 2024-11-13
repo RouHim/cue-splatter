@@ -412,6 +412,7 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
                     "❌ Most likely the cue file is not valid: \"{}\"",
                     cue_sheet.cue_file_path.display()
                 );
+                ask_user_for_fix(&cue_sheet);
                 std::process::exit(1);
             }
         }
@@ -421,6 +422,44 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
     println!();
 
     cue_sheet
+}
+
+// TODO
+/// Lets the user either, edit the cue file in the default editor (e), delete the cue file (d) open the cue file in the default viewer (v) or retry (r) or exit (x)
+fn ask_user_for_fix(cue_sheet: &CueSheet) {
+    yellow_ln!("🔧 Do you want to fix the cue file? (e)dit, (d)elete, (v)iew, (r)etry, e(x)it");
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+
+    match input.trim() {
+        "e" => {
+            let editor = std::env::var("EDITOR").unwrap_or("vi".to_string());
+            Command::new(editor)
+                .arg(cue_sheet.cue_file_path.as_os_str())
+                .status()
+                .expect("Failed to open file in editor");
+        }
+        "d" => {
+            std::fs::remove_file(&cue_sheet.cue_file_path).unwrap();
+            println!("🗑 Deleted cue file: {:?}", cue_sheet.cue_file_path);
+        }
+        "v" => {
+            Command::new("open")
+                .arg(cue_sheet.cue_file_path.as_os_str())
+                .status()
+                .expect("Failed to open file in viewer");
+        }
+        "r" => {}
+        "x" => {
+            println!("🚪 Exiting ...");
+            std::process::exit(1);
+        }
+        _ => {
+            println!("Invalid input, please try again");
+            ask_user_for_fix(cue_sheet);
+        }
+    }
 }
 
 /// Fixes the audio file reference in the cue sheet
