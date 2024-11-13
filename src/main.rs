@@ -100,6 +100,7 @@ fn main() {
     let_user_verify_cue_files(&cue_file_paths);
 
     // Verify cue files
+    // TODO: make me async, show progressbar, and collect data
     let cue_sheets: Vec<CueSheet> = cue_file_paths
         .iter()
         .flat_map(parse_cue_file)
