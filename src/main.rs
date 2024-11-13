@@ -584,8 +584,11 @@ fn read_audio_playtime(entry: &DirEntry) -> Option<u32> {
 
     // Parse ffprobe output
     let output = String::from_utf8_lossy(&output.stdout);
-    let length = output.trim().parse::<f32>().unwrap();
-    Some(length as u32)
+    if let Ok(playtime) = output.trim().parse::<f32>() {
+        Some(playtime as u32)
+    } else {
+        None
+    }
 }
 
 fn find_best_hamming_match(
