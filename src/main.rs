@@ -2,7 +2,7 @@ mod updater;
 
 use argh::FromArgs;
 use chardet::charset2encoding;
-use colour::{blue_ln, green_ln, red_ln, yellow_ln};
+use colour::{blue, green, red, red_ln, yellow, yellow_ln};
 use encoding::DecoderTrap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use lofty::config::WriteOptions;
@@ -201,7 +201,7 @@ fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
         println!("\t{}", cue_file.display());
     }
     println!();
-    blue_ln!("Proceed with splitting? (Y/n)");
+    blue!("Proceed with splitting? (Y/n): ");
 
     // proceed if user enters y|Y or just hits ENTER
     let mut input = String::new();
@@ -341,7 +341,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -> CueSheet {
     let mut cue_sheet = cue_sheet.clone();
 
-    println!("🔍 Verifying cue file",);
+    println!("🔍 Verifying cue file", );
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -361,7 +361,7 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
         if tolerate_audio_file_inaccuracy {
             fix_cue_sheet_audio_file_reference(&mut cue_sheet);
         } else {
-            std::process::exit(1);
+            ask_user_for_fix(&mut cue_sheet);
         }
     };
 
@@ -414,7 +414,6 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
                     cue_sheet.cue_file_path.display()
                 );
                 ask_user_for_fix(&cue_sheet);
-                std::process::exit(1);
             }
         }
     }
@@ -425,17 +424,16 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
     cue_sheet
 }
 
-// TODO
-/// Lets the user either, edit the cue file in the default editor (e), delete the cue file (d) open the cue file in the default viewer (v) or retry (r) or exit (x)
-fn ask_user_for_fix(cue_sheet: &CueSheet) {
-    yellow_ln!("🔧 Do you want to fix the cue file? (e)dit, (d)elete, (v)iew, (r)etry, e(x)it");
+/// Lets the user fix the cue file
+fn ask_user_for_fix(cue_sheet: &mut CueSheet) {
+    blue!("🔧 Do you want to fix the cue file? (e)dit, (d)elete, (l)ist files, (v)iew, (r)etry, (q)uit: ");
 
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).unwrap();
 
     match input.trim() {
         "e" => {
-            let editor = std::env::var("EDITOR").unwrap_or("vi".to_string());
+            let editor = std::env::var("EDITOR").unwrap_or("nano".to_string());
             Command::new(editor)
                 .arg(cue_sheet.cue_file_path.as_os_str())
                 .status()
@@ -451,8 +449,20 @@ fn ask_user_for_fix(cue_sheet: &CueSheet) {
                 .status()
                 .expect("Failed to open file in viewer");
         }
+        "l" => {
+            let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
+            let files_in_directory: Vec<DirEntry> = parent_dir
+                .read_dir()
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().is_file())
+                .collect();
+            for entry in files_in_directory {
+                println!("\t - {}", entry.path().display());
+            }
+        }
         "r" => {}
-        "x" => {
+        "q" => {
             println!("🚪 Exiting ...");
             std::process::exit(1);
         }
@@ -479,7 +489,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:",);
+    println!("🔧 Found a similar audio file in the same directory:", );
     let score = best_match.1;
 
     println!(
@@ -489,14 +499,14 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
         score
     );
 
-    let default_action: UserDefaultAction = if score > 80 {
-        green_ln!("🔧 Do you want to use this file instead? (Y/n)");
+    let default_action: UserDefaultAction = if score > 85 {
+        green!("🔧 Do you want to use this file instead? (Y/n): ");
         UserDefaultAction::Yes
-    } else if score > 50 {
-        yellow_ln!("🔧 Do you want to use this file instead? (Y/n)");
+    } else if score > 70 {
+        yellow!("🔧 Do you want to use this file instead? (Y/n): ");
         UserDefaultAction::Yes
     } else {
-        red_ln!("🔧 Do you want to use this file instead? (y/N)");
+        red!("🔧 Do you want to use this file instead? (y/N): ");
         UserDefaultAction::No
     };
 
@@ -510,10 +520,8 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     };
 
     if cancel_process {
-        red_ln!("❌ The referenced audio file was not found; please fix the cue file first:");
-        println!("{}", cue_sheet.cue_file_path.display());
-        println!("🚪 Exiting ...");
-        std::process::exit(1);
+        red_ln!("❌ The referenced audio could not be fixed automatically");
+        ask_user_for_fix(cue_sheet);
     }
 
     println!(
