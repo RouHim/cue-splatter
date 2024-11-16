@@ -5,6 +5,7 @@ use chardet::charset2encoding;
 use colour::{blue_ln, green_ln, red_ln, yellow_ln};
 use encoding::DecoderTrap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use lazy_static::lazy_static;
 use lofty::config::WriteOptions;
 use lofty::file::TaggedFileExt;
 use lofty::tag::{Accessor, Tag, TagExt};
@@ -28,9 +29,9 @@ struct CliArgs {
     #[argh(switch)]
     tolerate_audio_file_inaccuracy: bool,
 
-    /// delete the original audio file and cue file after splitting
+    /// move the audio file to the output dir
     #[argh(switch)]
-    cleanup_files: bool,
+    cleanup: bool,
 
     /// file or folder paths to parse
     /// default is "."
@@ -43,6 +44,7 @@ struct CueSheet {
     cue_file_path: PathBuf,
     audio_file_path: PathBuf,
     audio_file_name: String,
+    output_dir: Option<PathBuf>,
     title: Option<String>,
     tracks: Vec<Track>,
 }
@@ -100,12 +102,12 @@ fn main() {
     let_user_verify_cue_files(&cue_file_paths);
 
     // Verify cue files
-    // TODO: make me async, show progressbar, and collect data
     let cue_sheets: Vec<CueSheet> = cue_file_paths
         .iter()
         .flat_map(parse_cue_file)
         .map(|cue_sheet| verify_cue_files(cue_sheet, cli_args.tolerate_audio_file_inaccuracy))
         .map(augment_with_ffmpeg_commands)
+        .map(augment_with_output_dir)
         .collect();
 
     if cli_args.dry_run {
@@ -124,7 +126,7 @@ fn main() {
             println!("🎉 All tracks have been splitted");
 
             // Cleanup files
-            if cli_args.cleanup_files {
+            if cli_args.cleanup {
                 cleanup_files(cue_sheets);
             }
         } else {
@@ -133,6 +135,17 @@ fn main() {
     }
 
     println!("🚪 Everything done, exiting ...");
+}
+
+// TODO: do not clone but mut ref the cue sheet
+fn augment_with_output_dir(cue_sheet: &CueSheet) -> CueSheet {
+    let mut cue_sheet = cue_sheet.clone();
+
+    let first_track = cue_sheet.tracks.first().unwrap();
+    let output_dir = first_track.output_file.as_ref().unwrap().parent().unwrap();
+    cue_sheet.output_dir = Some(output_dir.to_path_buf());
+
+    cue_sheet
 }
 
 fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, String) {
@@ -182,15 +195,23 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, 
 }
 
 fn cleanup_files(cue_sheets: Vec<CueSheet>) {
-    println!("🗑 Cleaning up original audio file and cue file ...");
+    println!("🗑 Cleaning up ...");
     for cue_file in cue_sheets {
-        println!("\t{}", cue_file.audio_file_path.display());
-        std::fs::remove_file(cue_file.audio_file_path).unwrap();
-
-        println!("\t{}", cue_file.cue_file_path.display());
-        std::fs::remove_file(cue_file.cue_file_path).unwrap();
-
-        println!();
+        // Move the audio file to the output dir (only if it is not identical)
+        let audio_dir = cue_file.audio_file_path.parent().unwrap();
+        let output_dir = cue_file.output_dir.unwrap();
+        
+        println!("📦 Audio dir: {}", audio_dir.display());
+        println!("📦 Output dir: {}", output_dir.display());
+        
+        if audio_dir == output_dir {
+            println!("📦 Audio file is already in the output directory");
+        } else {
+            let audio_file_name = cue_file.audio_file_path.file_name().unwrap();
+            let output_audio_file = output_dir.join(audio_file_name);
+            std::fs::rename(&cue_file.audio_file_path, &output_audio_file).unwrap();
+            println!("📦 Moved audio file to: {}", output_audio_file.display());
+        }
     }
     println!("🎉 All files have been cleaned up");
 }
@@ -341,7 +362,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -> CueSheet {
     let mut cue_sheet = cue_sheet.clone();
 
-    println!("🔍 Verifying cue file",);
+    println!("🔍 Verifying cue file", );
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -489,7 +510,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:",);
+    println!("🔧 Found a similar audio file in the same directory:", );
     let score = best_match.1;
 
     println!(
@@ -799,6 +820,7 @@ fn check_tools(commands: Vec<&str>) {
     }
 }
 
+// TODO: do not clone but mut ref the cue sheet
 fn augment_with_ffmpeg_commands(cue_sheet: CueSheet) -> CueSheet {
     let mut cue_sheet = cue_sheet.clone();
 
@@ -923,22 +945,8 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
 fn derive_disk_number(cue_file_path: &Path) -> usize {
     // First split the cue file name by common delimiters
     let cue_file_name = cue_file_path.file_name().unwrap().to_str().unwrap();
-    // TODO: do this in a generic way
-    let token_space_count = cue_file_name.matches(' ').count();
-    let token_dash_count = cue_file_name.matches('-').count();
-    let token_underscore_count = cue_file_name.matches('_').count();
-
-    let delimiter = if token_space_count > token_dash_count
-        && token_space_count > token_underscore_count
-    {
-        ' '
-    } else if token_dash_count > token_space_count && token_dash_count > token_underscore_count {
-        '-'
-    } else {
-        '_'
-    };
-
-    let tokens: Vec<&str> = cue_file_name.split(delimiter).collect();
+    let delimiter = find_best_delimiter(cue_file_name);
+    let tokens: Vec<&str> = cue_file_name.split(&delimiter).collect();
 
     // Check if there is a token that starts trimmed ignoring case with CD
     let mut disk_number = tokens
@@ -1006,6 +1014,26 @@ fn derive_disk_number(cue_file_path: &Path) -> usize {
 
     // as default, use 1
     disk_number.unwrap_or(1)
+}
+
+/// Finds the best delimiter in the file name
+fn find_best_delimiter(file_name: &str) -> String {
+    lazy_static! {
+        static ref DELIMITERS: Vec<&'static str> = vec!["-", "_", " ", "."];
+    }
+
+    let mut best_delimiter = "";
+    let mut best_delimiter_score = 0;
+
+    for delimiter in DELIMITERS.iter() {
+        let score = file_name.matches(delimiter).count();
+        if score > best_delimiter_score {
+            best_delimiter = delimiter;
+            best_delimiter_score = score;
+        }
+    }
+
+    best_delimiter.to_string()
 }
 
 /// Determines if the current release is a multidisc release
@@ -1127,6 +1155,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             .unwrap()
             .join(audio_file_name),
         tracks,
+        output_dir: None,
     })
 }
 
