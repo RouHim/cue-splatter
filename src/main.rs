@@ -2,7 +2,7 @@ mod updater;
 
 use argh::FromArgs;
 use chardet::charset2encoding;
-use colour::{blue, green, red, red_ln, yellow, yellow_ln};
+use colour::{blue_ln, green_ln, red_ln, yellow_ln};
 use encoding::DecoderTrap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use lofty::config::WriteOptions;
@@ -201,7 +201,7 @@ fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
         println!("\t{}", cue_file.display());
     }
     println!();
-    blue!("Proceed with splitting? (Y/n): ");
+    blue_ln!("Proceed with splitting? (Y/n): ");
 
     // proceed if user enters y|Y or just hits ENTER
     let mut input = String::new();
@@ -341,7 +341,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -> CueSheet {
     let mut cue_sheet = cue_sheet.clone();
 
-    println!("🔍 Verifying cue file", );
+    println!("🔍 Verifying cue file",);
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -413,7 +413,7 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
                     "❌ Most likely the cue file is not valid: \"{}\"",
                     cue_sheet.cue_file_path.display()
                 );
-                ask_user_for_fix(&cue_sheet);
+                std::process::exit(1);
             }
         }
     }
@@ -426,7 +426,7 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
 
 /// Lets the user fix the cue file
 fn ask_user_for_fix(cue_sheet: &mut CueSheet) {
-    blue!("🔧 Do you want to fix the cue file? (e)dit, (d)elete, (l)ist files, (v)iew, (r)etry, (q)uit: ");
+    blue_ln!("🔧 Do you want to fix the cue file? (e)dit, (d)elete, (l)ist files, (v)iew, (r)etry, (q)uit: ");
 
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).unwrap();
@@ -489,7 +489,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:", );
+    println!("🔧 Found a similar audio file in the same directory:",);
     let score = best_match.1;
 
     println!(
@@ -500,13 +500,13 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     );
 
     let default_action: UserDefaultAction = if score > 85 {
-        green!("🔧 Do you want to use this file instead? (Y/n): ");
+        green_ln!("🔧 Do you want to use this file instead? (Y/n): ");
         UserDefaultAction::Yes
     } else if score > 70 {
-        yellow!("🔧 Do you want to use this file instead? (Y/n): ");
+        yellow_ln!("🔧 Do you want to use this file instead? (Y/n): ");
         UserDefaultAction::Yes
     } else {
-        red!("🔧 Do you want to use this file instead? (y/N): ");
+        red_ln!("🔧 Do you want to use this file instead? (y/N): ");
         UserDefaultAction::No
     };
 
@@ -879,11 +879,17 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
         });
 
     // Create a sub dir for each cue file
+    let sub_dir_name = if is_multi_disc(cue_sheet) {
+        let disk_number = derive_disk_number(&cue_sheet.cue_file_path);
+        format!("CD{}", disk_number)
+    } else {
+        ".".to_string()
+    };
     let sub_dir = cue_sheet
         .audio_file_path
         .parent()
         .unwrap()
-        .join(cue_sheet.audio_file_name.split('.').next().unwrap());
+        .join(sub_dir_name);
     let sub_dir = sub_dir.to_str().unwrap();
 
     // Create a filename for each track
@@ -910,6 +916,118 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
     let filename = format!("{} {}", track_number, track_title);
 
     format!("{}/{}.{}", sub_dir, filename, extension)
+}
+
+/// Derives the disk number from the cue file path
+/// This is done by checking the file name for common patterns
+fn derive_disk_number(cue_file_path: &Path) -> usize {
+    // First split the cue file name by common delimiters
+    let cue_file_name = cue_file_path.file_name().unwrap().to_str().unwrap();
+    // TODO: do this in a generic way
+    let token_space_count = cue_file_name.matches(' ').count();
+    let token_dash_count = cue_file_name.matches('-').count();
+    let token_underscore_count = cue_file_name.matches('_').count();
+
+    let delimiter = if token_space_count > token_dash_count
+        && token_space_count > token_underscore_count
+    {
+        ' '
+    } else if token_dash_count > token_space_count && token_dash_count > token_underscore_count {
+        '-'
+    } else {
+        '_'
+    };
+
+    let tokens: Vec<&str> = cue_file_name.split(delimiter).collect();
+
+    // Check if there is a token that starts trimmed ignoring case with CD
+    let mut disk_number = tokens
+        .iter()
+        .filter_map(|token| {
+            if token.trim().to_lowercase().starts_with("cd") {
+                token
+                    .trim()
+                    .to_lowercase()
+                    .strip_prefix("cd")
+                    .unwrap()
+                    .parse::<usize>()
+                    .ok()
+            } else {
+                None
+            }
+        })
+        .next();
+
+    // Check if there is a token that starts trimmed ignoring case with disc
+    if disk_number.is_none() {
+        disk_number = tokens
+            .iter()
+            .filter_map(|token| {
+                if token.trim().to_lowercase().starts_with("disc") {
+                    token
+                        .trim()
+                        .to_lowercase()
+                        .strip_prefix("disc")
+                        .unwrap()
+                        .parse::<usize>()
+                        .ok()
+                } else {
+                    None
+                }
+            })
+            .next();
+    }
+
+    // If we still have no disk number check the first token, if it is a number
+    if disk_number.is_none() {
+        // Strip 0 chars from string, and take only the first char
+        let first_token = tokens[0]
+            .replace("0", "")
+            .trim()
+            .chars()
+            .next()
+            .unwrap()
+            .to_string();
+        if let Ok(number) = first_token.parse::<usize>() {
+            disk_number = Some(number);
+        };
+    };
+
+    // If we have still no disk number check if the cue file name contains a number
+    if disk_number.is_none() {
+        let number = cue_file_name
+            .chars()
+            .filter(|c| c.is_numeric())
+            .collect::<String>();
+        if let Ok(number) = number.parse::<usize>() {
+            disk_number = Some(number);
+        }
+    }
+
+    // as default, use 1
+    disk_number.unwrap_or(1)
+}
+
+/// Determines if the current release is a multidisc release
+/// This is done by checking if there are multiple cue files in the same directory
+/// If there are multiple cue files, the release is considered a multidisc release
+fn is_multi_disc(cue_sheet: &CueSheet) -> bool {
+    let parent_dir = cue_sheet.cue_file_path.parent().unwrap();
+    let cue_files_in_directory: Vec<DirEntry> = parent_dir
+        .read_dir()
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .unwrap_or("".as_ref())
+                .eq_ignore_ascii_case("cue")
+        })
+        .collect();
+
+    cue_files_in_directory.len() > 1
 }
 
 fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
