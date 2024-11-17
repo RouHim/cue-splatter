@@ -1,3 +1,20 @@
+# [1.4.0](https://github.com/RouHim/cue-splatter/compare/1.3.2...1.4.0) (2024-11-17)
+
+
+### Bug Fixes
+
+* invalid time parsing ([d486dde](https://github.com/RouHim/cue-splatter/commit/d486dde7323c8027fd27fd9f005954bc4bc9895a))
+* invalid time parsing ([708de91](https://github.com/RouHim/cue-splatter/commit/708de915abdf3ae893047d9170c8ce2087fc3d71))
+
+
+### Features
+
+* add cd disc number detection ([b98f1c4](https://github.com/RouHim/cue-splatter/commit/b98f1c4583b8a4668cf650fc1c6381d7f44a951e))
+* add manual user actions ([5da4bb6](https://github.com/RouHim/cue-splatter/commit/5da4bb69a0ccfb5ad3c7ea4577709969ec346200))
+* move audio file tot output dir ([617a2fa](https://github.com/RouHim/cue-splatter/commit/617a2fa6129d37f04d27ac791eaf30a055da6ba0))
+* user fix action ([bb073c8](https://github.com/RouHim/cue-splatter/commit/bb073c8ea2fdc0ac6f7da126afb57abe22ec2303))
+* user fix action ([dd3bf0d](https://github.com/RouHim/cue-splatter/commit/dd3bf0d3ba15c20258b79b1ac63de383bcfbdd96))
+
 ## [1.3.2](https://github.com/RouHim/cue-splatter/compare/1.3.1...1.3.2) (2024-11-15)
 
 ## [1.3.1](https://github.com/RouHim/cue-splatter/compare/1.3.0...1.3.1) (2024-11-13)
