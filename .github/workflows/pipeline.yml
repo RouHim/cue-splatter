@@ -251,6 +251,10 @@ jobs:
           asset_name: cue-splatter-${{ env.VERSION }}-${{ env.CARGO_BUILD_TARGET }}
           asset_content_type: application/octet-stream
 
+  build-container:
+    name: Build container image
+    needs: [ build ]
+    runs-on: ubuntu-latest
       - name: Bulid container image
         uses: docker/build-push-action@v2
         with:
