@@ -26,7 +26,7 @@ struct CliArgs {
     #[argh(switch)]
     dry_run: bool,
 
-    /// move the audio file to the output dir
+    /// move the audio and cue file to the output dir
     #[argh(switch)]
     transfer: bool,
 
@@ -133,7 +133,7 @@ fn main() {
 
             // Moves the audio file to the output dir
             if cli_args.transfer {
-                move_input_audio_files(cue_sheets);
+                move_input_files(cue_sheets);
             }
         } else {
             report_failed_tracks(failed_tracks);
@@ -195,13 +195,14 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, 
     (true, "".to_string())
 }
 
-fn move_input_audio_files(cue_sheets: Vec<CueSheet>) {
+/// Moves input audio and cue file to the output directory
+fn move_input_files(cue_sheets: Vec<CueSheet>) {
     println!("⏩  Moving audio files to output directories");
     for cue_file in cue_sheets {
-        // Move the audio file to the output dir (only if it is not identical)
-        let audio_dir = cue_file.audio_file_path.parent().unwrap();
         let output_dir = cue_file.output_dir.unwrap();
 
+        // Move the audio file to the output dir (only if it is not identical)
+        let audio_dir = cue_file.audio_file_path.parent().unwrap();
         if audio_dir == output_dir {
             println!("📦 Audio file is already in the output directory");
         } else {
@@ -209,6 +210,17 @@ fn move_input_audio_files(cue_sheets: Vec<CueSheet>) {
             let output_audio_file = output_dir.join(audio_file_name);
             fs::rename(&cue_file.audio_file_path, &output_audio_file).unwrap();
             println!("📦 Moved audio file to: {}", output_audio_file.display());
+        }
+
+        // Move the cue file to the output dir (only if it is not identical)
+        let cue_file_dir = cue_file.cue_file_path.parent().unwrap();
+        if cue_file_dir == output_dir {
+            println!("📦 Cue file is already in the output directory");
+        } else {
+            let cue_file_name = cue_file.cue_file_path.file_name().unwrap();
+            let output_cue_file = output_dir.join(cue_file_name);
+            fs::rename(&cue_file.cue_file_path, &output_cue_file).unwrap();
+            println!("📦 Moved cue file to: {}", output_cue_file.display());
         }
     }
     println!("🎉 All files have been moved");
@@ -358,7 +370,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 }
 
 fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
-    println!("🔍 Verifying cue file",);
+    println!("🔍 Verifying cue file", );
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -540,7 +552,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> CueFixAction 
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:",);
+    println!("🔧 Found a similar audio file in the same directory:", );
     let score = best_match.1;
 
     println!(
