@@ -5,11 +5,13 @@ use chardet::charset2encoding;
 use colour::{blue_ln, green_ln, red_ln, yellow_ln};
 use encoding::DecoderTrap;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use lazy_static::lazy_static;
 use lofty::config::WriteOptions;
 use lofty::file::TaggedFileExt;
 use lofty::tag::{Accessor, Tag, TagExt};
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use std::cmp::{Ordering, PartialEq, PartialOrd};
+use std::fs;
 use std::fs::{DirEntry, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -24,13 +26,9 @@ struct CliArgs {
     #[argh(switch)]
     dry_run: bool,
 
-    /// tolerate audio file named inaccuracy
+    /// move the audio file to the output dir
     #[argh(switch)]
-    tolerate_audio_file_inaccuracy: bool,
-
-    /// delete the original audio file and cue file after splitting
-    #[argh(switch)]
-    cleanup_files: bool,
+    transfer: bool,
 
     /// file or folder paths to parse
     /// default is "."
@@ -43,6 +41,7 @@ struct CueSheet {
     cue_file_path: PathBuf,
     audio_file_path: PathBuf,
     audio_file_name: String,
+    output_dir: Option<PathBuf>,
     title: Option<String>,
     tracks: Vec<Track>,
 }
@@ -103,8 +102,18 @@ fn main() {
     let cue_sheets: Vec<CueSheet> = cue_file_paths
         .iter()
         .flat_map(parse_cue_file)
-        .map(|cue_sheet| verify_cue_files(cue_sheet, cli_args.tolerate_audio_file_inaccuracy))
-        .map(augment_with_ffmpeg_commands)
+        .filter_map(|mut cue_sheet| {
+            let fix_action = verify_cue_files(&mut cue_sheet);
+            match fix_action {
+                CueFixAction::Deleted => return None,
+                CueFixAction::Modified => {}
+                CueFixAction::None => {}
+            }
+
+            augment_with_ffmpeg_commands(&mut cue_sheet);
+            augment_with_output_dir(&mut cue_sheet);
+            Some(cue_sheet)
+        })
         .collect();
 
     if cli_args.dry_run {
@@ -122,16 +131,22 @@ fn main() {
         if failed_tracks.is_empty() {
             println!("🎉 All tracks have been splitted");
 
-            // Cleanup files
-            if cli_args.cleanup_files {
-                cleanup_files(cue_sheets);
+            // Moves the audio file to the output dir
+            if cli_args.transfer {
+                move_input_audio_files(cue_sheets);
             }
         } else {
             report_failed_tracks(failed_tracks);
         }
     }
 
-    println!("🚪 Everything done, exiting ...");
+    println!("🚪 Everything is done, bye bye");
+}
+
+fn augment_with_output_dir(cue_sheet: &mut CueSheet) {
+    let first_track = cue_sheet.tracks.first().unwrap();
+    let output_dir = first_track.output_file.as_ref().unwrap().parent().unwrap();
+    cue_sheet.output_dir = Some(output_dir.to_path_buf());
 }
 
 fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, String) {
@@ -180,18 +195,23 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, 
     (true, "".to_string())
 }
 
-fn cleanup_files(cue_sheets: Vec<CueSheet>) {
-    println!("🗑 Cleaning up original audio file and cue file ...");
+fn move_input_audio_files(cue_sheets: Vec<CueSheet>) {
+    println!("⏩  Moving audio files to output directories");
     for cue_file in cue_sheets {
-        println!("\t{}", cue_file.audio_file_path.display());
-        std::fs::remove_file(cue_file.audio_file_path).unwrap();
+        // Move the audio file to the output dir (only if it is not identical)
+        let audio_dir = cue_file.audio_file_path.parent().unwrap();
+        let output_dir = cue_file.output_dir.unwrap();
 
-        println!("\t{}", cue_file.cue_file_path.display());
-        std::fs::remove_file(cue_file.cue_file_path).unwrap();
-
-        println!();
+        if audio_dir == output_dir {
+            println!("📦 Audio file is already in the output directory");
+        } else {
+            let audio_file_name = cue_file.audio_file_path.file_name().unwrap();
+            let output_audio_file = output_dir.join(audio_file_name);
+            fs::rename(&cue_file.audio_file_path, &output_audio_file).unwrap();
+            println!("📦 Moved audio file to: {}", output_audio_file.display());
+        }
     }
-    println!("🎉 All files have been cleaned up");
+    println!("🎉 All files have been moved");
 }
 
 fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
@@ -200,7 +220,7 @@ fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
         println!("\t{}", cue_file.display());
     }
     println!();
-    blue_ln!("Proceed with splitting? (Y/n)");
+    blue_ln!("Proceed with splitting? (Y/n): ");
 
     // proceed if user enters y|Y or just hits ENTER
     let mut input = String::new();
@@ -320,7 +340,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
     // Make sure all sub dirs exist
     let output_file = track.output_file.as_ref().unwrap();
     let output_dir = output_file.parent().unwrap();
-    std::fs::create_dir_all(output_dir).unwrap();
+    fs::create_dir_all(output_dir).unwrap();
 
     let output = Command::new("sh")
         .arg("-c")
@@ -337,9 +357,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
     }
 }
 
-fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -> CueSheet {
-    let mut cue_sheet = cue_sheet.clone();
-
+fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
     println!("🔍 Verifying cue file",);
 
     // Verify that the cue file exists
@@ -357,10 +375,19 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
             "❌ The referenced audio file of the cue sheet was not found: {:?}",
             cue_sheet.audio_file_path
         );
-        if tolerate_audio_file_inaccuracy {
-            fix_cue_sheet_audio_file_reference(&mut cue_sheet);
-        } else {
-            std::process::exit(1);
+        match fix_cue_sheet_audio_file_reference(cue_sheet) {
+            CueFixAction::Modified => {
+                println!("🔄 Retrying verification ...");
+                let parse_cue_file = parse_cue_file(&cue_sheet.cue_file_path);
+                let mut new_cue_sheet = parse_cue_file.unwrap();
+                cue_sheet.audio_file_path = new_cue_sheet.audio_file_path.clone();
+                cue_sheet.audio_file_name = new_cue_sheet.audio_file_name.clone();
+                return verify_cue_files(&mut new_cue_sheet);
+            }
+            CueFixAction::Deleted => {
+                return CueFixAction::Deleted;
+            }
+            CueFixAction::None => {}
         }
     };
 
@@ -420,13 +447,83 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
     println!("✅ Cue file is valid");
     println!();
 
-    cue_sheet
+    CueFixAction::None
+}
+
+enum CueFixAction {
+    /// The cue file was modified by the fix action, we should retry the process
+    Modified,
+    /// The cue file was deleted by the fix action, we should skip the process
+    Deleted,
+    /// The cue file was not modified by the fix action, nothing special to do
+    None,
+}
+
+/// Lets the user fix the cue file
+fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> CueFixAction {
+    blue_ln!("🔧 {}", cue_sheet.cue_file_path.display());
+    blue_ln!("🔧 What do you want to do with the cure file? (e)dit, (d)elete, (l)ist files, (v)iew, (r)etry, (q)uit: ");
+
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+
+    match input.trim() {
+        "e" => {
+            let editor = std::env::var("EDITOR").unwrap_or("nano".to_string());
+            Command::new(editor)
+                .arg(cue_sheet.cue_file_path.as_os_str())
+                .status()
+                .expect("Failed to open file in editor");
+
+            ask_user_for_fix(cue_sheet)
+        }
+        "d" => {
+            fs::remove_file(&cue_sheet.cue_file_path).unwrap();
+            println!("🗑 Deleted cue file: {:?}", cue_sheet.cue_file_path);
+
+            CueFixAction::Deleted
+        }
+        "v" => {
+            // Read and print cue file content
+            let data = fs::read_to_string(&cue_sheet.cue_file_path).unwrap();
+            // clear screen
+            println!();
+            println!();
+            println!("📄 Cue file content:");
+            println!("{}", data);
+
+            ask_user_for_fix(cue_sheet)
+        }
+        "l" => {
+            let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
+            let files_in_directory: Vec<DirEntry> = parent_dir
+                .read_dir()
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().is_file())
+                .collect();
+            for entry in files_in_directory {
+                println!("\t - {}", entry.path().display());
+            }
+
+            ask_user_for_fix(cue_sheet)
+        }
+        "r" => CueFixAction::Modified,
+        "q" => {
+            println!("🚪 Exiting ...");
+            std::process::exit(1);
+        }
+        _ => {
+            println!("Invalid input, please try again");
+            ask_user_for_fix(cue_sheet)
+        }
+    }
 }
 
 /// Fixes the audio file reference in the cue sheet
 /// This happens e.g. when the case of the audio file path in the cue sheet does not match the actual file path
 /// This is a common issue on Windows file systems
-fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
+fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> CueFixAction {
     let broken_file_name = cue_sheet
         .audio_file_path
         .file_name()
@@ -436,6 +533,10 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
 
     let best_match = find_best_match(cue_sheet, parent_dir, broken_file_name);
+    if best_match.is_none() {
+        return ask_user_for_fix(cue_sheet);
+    }
+    let best_match = best_match.unwrap();
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
@@ -449,14 +550,14 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
         score
     );
 
-    let default_action: UserDefaultAction = if score > 80 {
-        green_ln!("🔧 Do you want to use this file instead? (Y/n)");
+    let default_action: UserDefaultAction = if score > 85 {
+        green_ln!("🔧 Do you want to use this file instead? (Y/n): ");
         UserDefaultAction::Yes
-    } else if score > 50 {
-        yellow_ln!("🔧 Do you want to use this file instead? (Y/n)");
+    } else if score > 70 {
+        yellow_ln!("🔧 Do you want to use this file instead? (Y/n): ");
         UserDefaultAction::Yes
     } else {
-        red_ln!("🔧 Do you want to use this file instead? (y/N)");
+        red_ln!("🔧 Do you want to use this file instead? (y/N): ");
         UserDefaultAction::No
     };
 
@@ -470,10 +571,8 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     };
 
     if cancel_process {
-        red_ln!("❌ The referenced audio file was not found; please fix the cue file first:");
-        println!("{}", cue_sheet.cue_file_path.display());
-        println!("🚪 Exiting ...");
-        std::process::exit(1);
+        red_ln!("❌ The referenced audio could not be fixed automatically");
+        return ask_user_for_fix(cue_sheet);
     }
 
     println!(
@@ -482,6 +581,8 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
         best_match_file_name
     );
     cue_sheet.audio_file_path = best_match.0.clone();
+
+    CueFixAction::None
 }
 
 /// Finds the best match for the audio file in the same directory
@@ -489,7 +590,7 @@ fn find_best_match(
     cue_sheet: &CueSheet,
     parent_dir: &Path,
     broken_file_name: &str,
-) -> (PathBuf, usize) {
+) -> Option<(PathBuf, usize)> {
     // Find all entries in the parent directory
     let files_in_directory: Vec<DirEntry> = parent_dir
         .read_dir()
@@ -525,29 +626,30 @@ fn find_best_match(
     if let Some(levenshtein_result) = &levenshtein_result {
         if let Some(hamming_result) = &hamming_result {
             if levenshtein_result.0 == hamming_result.0 {
-                return levenshtein_result.clone();
+                return Some(levenshtein_result.clone());
             }
             // If they differ, take the one with the better score
             else if levenshtein_result.1 > hamming_result.1 {
-                return levenshtein_result.clone();
+                return Some(levenshtein_result.clone());
             } else {
-                return hamming_result.clone();
+                return Some(hamming_result.clone());
             }
         }
     }
 
     // If one is missing but the other is present, return the present one
     if levenshtein_result.is_some() && hamming_result.is_none() {
-        return levenshtein_result.unwrap();
+        return Some(levenshtein_result.unwrap());
     } else if levenshtein_result.is_none() && hamming_result.is_some() {
-        return hamming_result.unwrap();
+        return Some(hamming_result.unwrap());
     }
 
     yellow_ln!(
         "❌ Could not find a good match for the audio file in the same directory: {:?}",
         cue_sheet.audio_file_path
     );
-    std::process::exit(1);
+
+    None
 }
 
 fn audio_playtime_matches(entry: &DirEntry, last_track: &Track) -> bool {
@@ -751,19 +853,15 @@ fn check_tools(commands: Vec<&str>) {
     }
 }
 
-fn augment_with_ffmpeg_commands(cue_sheet: CueSheet) -> CueSheet {
-    let mut cue_sheet = cue_sheet.clone();
-
+fn augment_with_ffmpeg_commands(cue_sheet: &mut CueSheet) {
     let augmented_tracks: Vec<Track> = cue_sheet
         .tracks
         .iter()
         .enumerate()
-        .map(|(index, track)| build_ffmpeg_command(&cue_sheet, index, track))
+        .map(|(index, track)| build_ffmpeg_command(cue_sheet, index, track))
         .collect();
 
     cue_sheet.tracks = augmented_tracks;
-
-    cue_sheet
 }
 
 fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Track {
@@ -798,9 +896,8 @@ fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Tr
         "".to_string()
     };
 
-    let output_file_name = build_output_name(cue_sheet, track);
-
     let audio_file_path = cue_sheet.audio_file_path.to_str().unwrap();
+    let output_file_name = build_output_name(cue_sheet, track);
 
     let command = format!(
         "ffmpeg -y -i \"{}\" -map_metadata -1 -acodec copy -ss \"{}\" {} \"{}\"",
@@ -831,11 +928,17 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
         });
 
     // Create a sub dir for each cue file
+    let sub_dir_name = if is_multi_disc(cue_sheet) {
+        let disk_number = derive_disk_number(&cue_sheet.cue_file_path);
+        format!("CD{}", disk_number)
+    } else {
+        ".".to_string()
+    };
     let sub_dir = cue_sheet
         .audio_file_path
         .parent()
         .unwrap()
-        .join(cue_sheet.audio_file_name.split('.').next().unwrap());
+        .join(sub_dir_name);
     let sub_dir = sub_dir.to_str().unwrap();
 
     // Create a filename for each track
@@ -862,6 +965,124 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
     let filename = format!("{} {}", track_number, track_title);
 
     format!("{}/{}.{}", sub_dir, filename, extension)
+}
+
+/// Derives the disk number from the cue file path
+/// This is done by checking the file name for common patterns
+fn derive_disk_number(cue_file_path: &Path) -> usize {
+    // First split the cue file name by common delimiters
+    let cue_file_name = cue_file_path.file_name().unwrap().to_str().unwrap();
+    let delimiter = find_best_delimiter(cue_file_name);
+    let tokens: Vec<&str> = cue_file_name.split(&delimiter).collect();
+
+    // Check if there is a token that starts trimmed ignoring case with CD
+    let mut disk_number = tokens
+        .iter()
+        .filter_map(|token| {
+            if token.trim().to_lowercase().starts_with("cd") {
+                token
+                    .trim()
+                    .to_lowercase()
+                    .strip_prefix("cd")
+                    .unwrap()
+                    .parse::<usize>()
+                    .ok()
+            } else {
+                None
+            }
+        })
+        .next();
+
+    // Check if there is a token that starts trimmed ignoring case with disc
+    if disk_number.is_none() {
+        disk_number = tokens
+            .iter()
+            .filter_map(|token| {
+                if token.trim().to_lowercase().starts_with("disc") {
+                    token
+                        .trim()
+                        .to_lowercase()
+                        .strip_prefix("disc")
+                        .unwrap()
+                        .parse::<usize>()
+                        .ok()
+                } else {
+                    None
+                }
+            })
+            .next();
+    }
+
+    // If we still have no disk number check the first token, if it is a number
+    if disk_number.is_none() {
+        // Strip 0 chars from string, and take only the first char
+        let first_token = tokens[0]
+            .replace("0", "")
+            .trim()
+            .chars()
+            .next()
+            .unwrap()
+            .to_string();
+        if let Ok(number) = first_token.parse::<usize>() {
+            disk_number = Some(number);
+        };
+    };
+
+    // If we have still no disk number check if the cue file name contains a number
+    if disk_number.is_none() {
+        let number = cue_file_name
+            .chars()
+            .filter(|c| c.is_numeric())
+            .collect::<String>();
+        if let Ok(number) = number.parse::<usize>() {
+            disk_number = Some(number);
+        }
+    }
+
+    // as default, use 1
+    disk_number.unwrap_or(1)
+}
+
+/// Finds the best delimiter in the file name
+fn find_best_delimiter(file_name: &str) -> String {
+    lazy_static! {
+        static ref DELIMITERS: Vec<&'static str> = vec!["-", "_", " ", "."];
+    }
+
+    let mut best_delimiter = "";
+    let mut best_delimiter_score = 0;
+
+    for delimiter in DELIMITERS.iter() {
+        let score = file_name.matches(delimiter).count();
+        if score > best_delimiter_score {
+            best_delimiter = delimiter;
+            best_delimiter_score = score;
+        }
+    }
+
+    best_delimiter.to_string()
+}
+
+/// Determines if the current release is a multidisc release
+/// This is done by checking if there are multiple cue files in the same directory
+/// If there are multiple cue files, the release is considered a multidisc release
+fn is_multi_disc(cue_sheet: &CueSheet) -> bool {
+    let parent_dir = cue_sheet.cue_file_path.parent().unwrap();
+    let cue_files_in_directory: Vec<DirEntry> = parent_dir
+        .read_dir()
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .unwrap_or("".as_ref())
+                .eq_ignore_ascii_case("cue")
+        })
+        .collect();
+
+    cue_files_in_directory.len() > 1
 }
 
 fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
@@ -961,6 +1182,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             .unwrap()
             .join(audio_file_name),
         tracks,
+        output_dir: None,
     })
 }
 

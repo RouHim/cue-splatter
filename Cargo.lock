@@ -200,6 +200,7 @@ dependencies = [
  "colour",
  "encoding",
  "indicatif",
+ "lazy_static",
  "levenshtein",
  "lofty",
  "rayon",
