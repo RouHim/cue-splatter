@@ -102,7 +102,7 @@ fn main() {
     let cue_sheets: Vec<CueSheet> = cue_file_paths
         .iter()
         .flat_map(parse_cue_file)
-        .map(|mut cue_sheet| {
+        .filter_map(|mut cue_sheet| {
             let fix_action = verify_cue_files(&mut cue_sheet);
             match fix_action {
                 CueFixAction::Deleted => return None,
@@ -114,7 +114,6 @@ fn main() {
             augment_with_output_dir(&mut cue_sheet);
             Some(cue_sheet)
         })
-        .flat_map(|cue_sheet| cue_sheet)
         .collect();
 
     if cli_args.dry_run {
@@ -208,7 +207,7 @@ fn move_input_audio_files(cue_sheets: Vec<CueSheet>) {
         } else {
             let audio_file_name = cue_file.audio_file_path.file_name().unwrap();
             let output_audio_file = output_dir.join(audio_file_name);
-            std::fs::rename(&cue_file.audio_file_path, &output_audio_file).unwrap();
+            fs::rename(&cue_file.audio_file_path, &output_audio_file).unwrap();
             println!("📦 Moved audio file to: {}", output_audio_file.display());
         }
     }
@@ -341,7 +340,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
     // Make sure all sub dirs exist
     let output_file = track.output_file.as_ref().unwrap();
     let output_dir = output_file.parent().unwrap();
-    std::fs::create_dir_all(output_dir).unwrap();
+    fs::create_dir_all(output_dir).unwrap();
 
     let output = Command::new("sh")
         .arg("-c")
@@ -359,7 +358,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 }
 
 fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
-    println!("🔍 Verifying cue file", );
+    println!("🔍 Verifying cue file",);
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -381,8 +380,8 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
                 println!("🔄 Retrying verification ...");
                 let parse_cue_file = parse_cue_file(&cue_sheet.cue_file_path);
                 let mut new_cue_sheet = parse_cue_file.unwrap();
-                // TODO: this does not work
                 cue_sheet.audio_file_path = new_cue_sheet.audio_file_path.clone();
+                cue_sheet.audio_file_name = new_cue_sheet.audio_file_name.clone();
                 return verify_cue_files(&mut new_cue_sheet);
             }
             CueFixAction::Deleted => {
@@ -479,7 +478,7 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> CueFixAction {
             ask_user_for_fix(cue_sheet)
         }
         "d" => {
-            std::fs::remove_file(&cue_sheet.cue_file_path).unwrap();
+            fs::remove_file(&cue_sheet.cue_file_path).unwrap();
             println!("🗑 Deleted cue file: {:?}", cue_sheet.cue_file_path);
 
             CueFixAction::Deleted
@@ -541,7 +540,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> CueFixAction 
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:", );
+    println!("🔧 Found a similar audio file in the same directory:",);
     let score = best_match.1;
 
     println!(
@@ -897,9 +896,8 @@ fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Tr
         "".to_string()
     };
 
-    let output_file_name = build_output_name(cue_sheet, track);
-
     let audio_file_path = cue_sheet.audio_file_path.to_str().unwrap();
+    let output_file_name = build_output_name(cue_sheet, track);
 
     let command = format!(
         "ffmpeg -y -i \"{}\" -map_metadata -1 -acodec copy -ss \"{}\" {} \"{}\"",
