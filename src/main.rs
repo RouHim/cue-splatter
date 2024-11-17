@@ -25,13 +25,9 @@ struct CliArgs {
     #[argh(switch)]
     dry_run: bool,
 
-    /// tolerate audio file named inaccuracy
-    #[argh(switch)]
-    tolerate_audio_file_inaccuracy: bool,
-
     /// move the audio file to the output dir
     #[argh(switch)]
-    cleanup: bool,
+    transfer: bool,
 
     /// file or folder paths to parse
     /// default is "."
@@ -105,9 +101,19 @@ fn main() {
     let cue_sheets: Vec<CueSheet> = cue_file_paths
         .iter()
         .flat_map(parse_cue_file)
-        .map(|cue_sheet| verify_cue_files(cue_sheet, cli_args.tolerate_audio_file_inaccuracy))
-        .map(augment_with_ffmpeg_commands)
-        .map(augment_with_output_dir)
+        .map(|mut cue_sheet| {
+            let fix_action = verify_cue_files(&mut cue_sheet);
+            match fix_action {
+                FixAction::Deleted => return None,
+                FixAction::Modified => {}
+                FixAction::None => {}
+            }
+
+            augment_with_ffmpeg_commands(&mut cue_sheet);
+            augment_with_output_dir(&mut cue_sheet);
+            Some(cue_sheet)
+        })
+        .flat_map(|cue_sheet| cue_sheet)
         .collect();
 
     if cli_args.dry_run {
@@ -125,27 +131,22 @@ fn main() {
         if failed_tracks.is_empty() {
             println!("🎉 All tracks have been splitted");
 
-            // Cleanup files
-            if cli_args.cleanup {
-                cleanup_files(cue_sheets);
+            // Moves the audio file to the output dir
+            if cli_args.transfer {
+                move_input_audio_files(cue_sheets);
             }
         } else {
             report_failed_tracks(failed_tracks);
         }
     }
 
-    println!("🚪 Everything done, exiting ...");
+    println!("🚪 Everything is done, bye bye");
 }
 
-// TODO: do not clone but mut ref the cue sheet
-fn augment_with_output_dir(cue_sheet: &CueSheet) -> CueSheet {
-    let mut cue_sheet = cue_sheet.clone();
-
+fn augment_with_output_dir(cue_sheet: &mut CueSheet) {
     let first_track = cue_sheet.tracks.first().unwrap();
     let output_dir = first_track.output_file.as_ref().unwrap().parent().unwrap();
     cue_sheet.output_dir = Some(output_dir.to_path_buf());
-
-    cue_sheet
 }
 
 fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, String) {
@@ -194,16 +195,13 @@ fn write_audio_metadata_to_track(cue_sheet: &CueSheet, track: &Track) -> (bool, 
     (true, "".to_string())
 }
 
-fn cleanup_files(cue_sheets: Vec<CueSheet>) {
-    println!("🗑 Cleaning up ...");
+fn move_input_audio_files(cue_sheets: Vec<CueSheet>) {
+    println!("⏩  Moving audio files to output directories");
     for cue_file in cue_sheets {
         // Move the audio file to the output dir (only if it is not identical)
         let audio_dir = cue_file.audio_file_path.parent().unwrap();
         let output_dir = cue_file.output_dir.unwrap();
-        
-        println!("📦 Audio dir: {}", audio_dir.display());
-        println!("📦 Output dir: {}", output_dir.display());
-        
+
         if audio_dir == output_dir {
             println!("📦 Audio file is already in the output directory");
         } else {
@@ -213,7 +211,7 @@ fn cleanup_files(cue_sheets: Vec<CueSheet>) {
             println!("📦 Moved audio file to: {}", output_audio_file.display());
         }
     }
-    println!("🎉 All files have been cleaned up");
+    println!("🎉 All files have been moved");
 }
 
 fn let_user_verify_cue_files(cue_files: &Vec<PathBuf>) {
@@ -359,10 +357,8 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
     }
 }
 
-fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -> CueSheet {
-    let mut cue_sheet = cue_sheet.clone();
-
-    println!("🔍 Verifying cue file", );
+fn verify_cue_files(cue_sheet: &mut CueSheet) -> FixAction {
+    println!("🔍 Verifying cue file",);
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -379,10 +375,14 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
             "❌ The referenced audio file of the cue sheet was not found: {:?}",
             cue_sheet.audio_file_path
         );
-        if tolerate_audio_file_inaccuracy {
-            fix_cue_sheet_audio_file_reference(&mut cue_sheet);
-        } else {
-            ask_user_for_fix(&mut cue_sheet);
+        match fix_cue_sheet_audio_file_reference(cue_sheet) {
+            FixAction::Modified => {
+                return verify_cue_files(cue_sheet);
+            }
+            FixAction::Deleted => {
+                return FixAction::Deleted;
+            }
+            FixAction::None => {}
         }
     };
 
@@ -442,12 +442,21 @@ fn verify_cue_files(cue_sheet: CueSheet, tolerate_audio_file_inaccuracy: bool) -
     println!("✅ Cue file is valid");
     println!();
 
-    cue_sheet
+    FixAction::None
+}
+
+enum FixAction {
+    /// The cue file was modified by the fix action, we should retry the process
+    Modified,
+    /// The cue file was deleted by the fix action, we should skip the process
+    Deleted,
+    /// The cue file was not modified by the fix action, nothing special to do
+    None,
 }
 
 /// Lets the user fix the cue file
-fn ask_user_for_fix(cue_sheet: &mut CueSheet) {
-    blue_ln!("🔧 Do you want to fix the cue file? (e)dit, (d)elete, (l)ist files, (v)iew, (r)etry, (q)uit: ");
+fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> FixAction {
+    blue_ln!("🔧 What do you want to do with the cure file? (e)dit, (d)elete, (l)ist files, (v)iew, (r)etry, (q)uit: ");
 
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).unwrap();
@@ -459,16 +468,22 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) {
                 .arg(cue_sheet.cue_file_path.as_os_str())
                 .status()
                 .expect("Failed to open file in editor");
+
+            ask_user_for_fix(cue_sheet)
         }
         "d" => {
             std::fs::remove_file(&cue_sheet.cue_file_path).unwrap();
             println!("🗑 Deleted cue file: {:?}", cue_sheet.cue_file_path);
+
+            FixAction::Deleted
         }
         "v" => {
             Command::new("open")
                 .arg(cue_sheet.cue_file_path.as_os_str())
                 .status()
                 .expect("Failed to open file in viewer");
+
+            ask_user_for_fix(cue_sheet)
         }
         "l" => {
             let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
@@ -481,15 +496,17 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) {
             for entry in files_in_directory {
                 println!("\t - {}", entry.path().display());
             }
+
+            ask_user_for_fix(cue_sheet)
         }
-        "r" => {}
+        "r" => FixAction::Modified,
         "q" => {
             println!("🚪 Exiting ...");
             std::process::exit(1);
         }
         _ => {
             println!("Invalid input, please try again");
-            ask_user_for_fix(cue_sheet);
+            ask_user_for_fix(cue_sheet)
         }
     }
 }
@@ -497,7 +514,7 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) {
 /// Fixes the audio file reference in the cue sheet
 /// This happens e.g. when the case of the audio file path in the cue sheet does not match the actual file path
 /// This is a common issue on Windows file systems
-fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
+fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> FixAction {
     let broken_file_name = cue_sheet
         .audio_file_path
         .file_name()
@@ -507,10 +524,14 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
     let parent_dir = cue_sheet.audio_file_path.parent().unwrap();
 
     let best_match = find_best_match(cue_sheet, parent_dir, broken_file_name);
+    if best_match.is_none() {
+        return ask_user_for_fix(cue_sheet);
+    }
+    let best_match = best_match.unwrap();
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:", );
+    println!("🔧 Found a similar audio file in the same directory:",);
     let score = best_match.1;
 
     println!(
@@ -542,7 +563,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
 
     if cancel_process {
         red_ln!("❌ The referenced audio could not be fixed automatically");
-        ask_user_for_fix(cue_sheet);
+        return ask_user_for_fix(cue_sheet);
     }
 
     println!(
@@ -551,6 +572,8 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) {
         best_match_file_name
     );
     cue_sheet.audio_file_path = best_match.0.clone();
+
+    FixAction::None
 }
 
 /// Finds the best match for the audio file in the same directory
@@ -558,7 +581,7 @@ fn find_best_match(
     cue_sheet: &CueSheet,
     parent_dir: &Path,
     broken_file_name: &str,
-) -> (PathBuf, usize) {
+) -> Option<(PathBuf, usize)> {
     // Find all entries in the parent directory
     let files_in_directory: Vec<DirEntry> = parent_dir
         .read_dir()
@@ -594,29 +617,30 @@ fn find_best_match(
     if let Some(levenshtein_result) = &levenshtein_result {
         if let Some(hamming_result) = &hamming_result {
             if levenshtein_result.0 == hamming_result.0 {
-                return levenshtein_result.clone();
+                return Some(levenshtein_result.clone());
             }
             // If they differ, take the one with the better score
             else if levenshtein_result.1 > hamming_result.1 {
-                return levenshtein_result.clone();
+                return Some(levenshtein_result.clone());
             } else {
-                return hamming_result.clone();
+                return Some(hamming_result.clone());
             }
         }
     }
 
     // If one is missing but the other is present, return the present one
     if levenshtein_result.is_some() && hamming_result.is_none() {
-        return levenshtein_result.unwrap();
+        return Some(levenshtein_result.unwrap());
     } else if levenshtein_result.is_none() && hamming_result.is_some() {
-        return hamming_result.unwrap();
+        return Some(hamming_result.unwrap());
     }
 
     yellow_ln!(
         "❌ Could not find a good match for the audio file in the same directory: {:?}",
         cue_sheet.audio_file_path
     );
-    std::process::exit(1);
+
+    None
 }
 
 fn audio_playtime_matches(entry: &DirEntry, last_track: &Track) -> bool {
@@ -820,20 +844,15 @@ fn check_tools(commands: Vec<&str>) {
     }
 }
 
-// TODO: do not clone but mut ref the cue sheet
-fn augment_with_ffmpeg_commands(cue_sheet: CueSheet) -> CueSheet {
-    let mut cue_sheet = cue_sheet.clone();
-
+fn augment_with_ffmpeg_commands(cue_sheet: &mut CueSheet) {
     let augmented_tracks: Vec<Track> = cue_sheet
         .tracks
         .iter()
         .enumerate()
-        .map(|(index, track)| build_ffmpeg_command(&cue_sheet, index, track))
+        .map(|(index, track)| build_ffmpeg_command(cue_sheet, index, track))
         .collect();
 
     cue_sheet.tracks = augmented_tracks;
-
-    cue_sheet
 }
 
 fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Track {
