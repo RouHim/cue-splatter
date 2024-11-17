@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/RouHim/cue-splatter/compare/1.4.1...1.5.0) (2024-11-17)
+
+
+### Features
+
+* also move cue file to output dir ([0c7d428](https://github.com/RouHim/cue-splatter/commit/0c7d428b10d836fe29e9a0d1fac67fa6fb7cc7a2))
+
 ## [1.4.1](https://github.com/RouHim/cue-splatter/compare/1.4.0...1.4.1) (2024-11-17)
 
 
