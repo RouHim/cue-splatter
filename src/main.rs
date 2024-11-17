@@ -1202,12 +1202,11 @@ fn parse_cue_duration(cue_line_value: &str, track: &mut Track) -> Option<CueDura
     let minutes = cue_duration_split[0].parse::<u32>().unwrap();
     let seconds = cue_duration_split[1].parse::<u32>().unwrap();
     let frames = cue_duration_split[2].parse::<u32>().unwrap();
-    let cue_duration = Some(CueDuration {
+    Some(CueDuration {
         minutes,
         seconds,
         frames,
-    });
-    cue_duration
+    })
 }
 
 fn read_cue_file_content(cue_file_path: &Path, file: File) -> String {
