@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/RouHim/cue-splatter/compare/1.4.0...1.4.1) (2024-11-17)
+
+
+### Bug Fixes
+
+* throw correct error for broken cue duration ([2f73e69](https://github.com/RouHim/cue-splatter/commit/2f73e695be2f3918b49016103a7b4a5005ebecdb))
+
 # [1.4.0](https://github.com/RouHim/cue-splatter/compare/1.3.2...1.4.0) (2024-11-17)
 
 
