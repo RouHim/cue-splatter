@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/RouHim/cue-splatter/compare/1.6.0...1.7.0) (2024-11-17)
+
+
+### Features
+
+* add docker build to pipe ([53eee4c](https://github.com/RouHim/cue-splatter/commit/53eee4c3c547fd0ab931e5a4c44478a3f5e22b64))
+
 # [1.6.0](https://github.com/RouHim/cue-splatter/compare/1.5.0...1.6.0) (2024-11-17)
 
 
