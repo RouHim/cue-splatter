@@ -12,21 +12,21 @@ concurrency:
 
 jobs:
 
-#  check-repo:
-#    name: Check git repository
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Checkout code
-#        uses: actions/checkout@v4
-#
-#      - name: Run Trivy vulnerability scanner
-#        uses: aquasecurity/trivy-action@master
-#        with:
-#          scan-type: 'fs'
-#          format: 'table'
-#          exit-code: '1'
-#          ignore-unfixed: true
-#          severity: 'CRITICAL,HIGH'
+  #  check-repo:
+  #    name: Check git repository
+  #    runs-on: ubuntu-latest
+  #    steps:
+  #      - name: Checkout code
+  #        uses: actions/checkout@v4
+  #
+  #      - name: Run Trivy vulnerability scanner
+  #        uses: aquasecurity/trivy-action@master
+  #        with:
+  #          scan-type: 'fs'
+  #          format: 'table'
+  #          exit-code: '1'
+  #          ignore-unfixed: true
+  #          severity: 'CRITICAL,HIGH'
 
   check-code-style:
     name: Check code style
@@ -240,17 +240,6 @@ jobs:
           export CPU_TARGET=$(echo $CARGO_BUILD_TARGET | cut -d'-' -f1)
           echo "CPU_TARGET=${CPU_TARGET}" >> $GITHUB_ENV
 
-#      - name: Bulid container image
-#        uses: docker/build-push-action@v2
-#        with:
-#          context: .
-#          file: Containerfile
-#          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
-#          push: true
-#          tags: |
-#            ghcr.io/rouhim/cue-splatter:latest
-#            ghcr.io/rouhim/cue-splatter:${{ env.VERSION }}
-
       - name: Upload artifact
         uses: actions/upload-release-asset@v1
         env:
@@ -261,3 +250,13 @@ jobs:
           # Updater expects: <asset name>-<semver>-<platform/target>.<extension>
           asset_name: cue-splatter-${{ env.VERSION }}-${{ env.CARGO_BUILD_TARGET }}
           asset_content_type: application/octet-stream
+
+      - name: Bulid container image
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/rouhim/cue-splatter:latest

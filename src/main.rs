@@ -481,7 +481,7 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> CueFixAction {
 
     match input.trim() {
         "e" => {
-            let editor = std::env::var("EDITOR").unwrap_or("nano".to_string());
+            let editor = std::env::var("EDITOR").unwrap_or("vi".to_string());
             Command::new(editor)
                 .arg(cue_sheet.cue_file_path.as_os_str())
                 .status()
