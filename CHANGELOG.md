@@ -1,3 +1,10 @@
+## [1.7.2](https://github.com/RouHim/cue-splatter/compare/1.7.1...1.7.2) (2024-11-17)
+
+
+### Bug Fixes
+
+* add dockerhub login ([4669e80](https://github.com/RouHim/cue-splatter/commit/4669e80ca2f9e6bce5e224774d0ad968001875ff))
+
 ## [1.7.1](https://github.com/RouHim/cue-splatter/compare/1.7.0...1.7.1) (2024-11-17)
 
 
