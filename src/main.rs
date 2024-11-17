@@ -370,7 +370,7 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 }
 
 fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
-    println!("🔍 Verifying cue file", );
+    println!("🔍 Verifying cue file",);
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -552,7 +552,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> CueFixAction 
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:", );
+    println!("🔧 Found a similar audio file in the same directory:",);
     let score = best_match.1;
 
     println!(
