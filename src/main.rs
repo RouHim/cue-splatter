@@ -1145,16 +1145,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
             }
             "INDEX" => {
                 if let Some(ref mut track) = current_track {
-                    let cue_duration = cue_line_value.split(' ').last().unwrap();
-                    let cue_duration_split: Vec<&str> = cue_duration.split(':').collect();
-                    let minutes = cue_duration_split[0].parse::<u32>().unwrap();
-                    let seconds = cue_duration_split[1].parse::<u32>().unwrap();
-                    let frames = cue_duration_split[2].parse::<u32>().unwrap();
-                    track.start_time = Some(CueDuration {
-                        minutes,
-                        seconds,
-                        frames,
-                    });
+                    track.start_time = parse_cue_duration(cue_line_value, track);
                 }
             }
             "PERFORMER" => {
@@ -1184,6 +1175,27 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
         tracks,
         output_dir: None,
     })
+}
+
+fn parse_cue_duration(cue_line_value: &str, track: &mut Track) -> Option<CueDuration> {
+    let cue_duration = cue_line_value.split(' ').last().unwrap();
+    let cue_duration_split: Vec<&str> = cue_duration.split(':').collect();
+    if cue_duration_split.len() != 3 {
+        eprintln!(
+            "❌ Invalid cue duration: {} of track {}",
+            cue_duration, track.number
+        );
+        std::process::exit(1);
+    }
+    let minutes = cue_duration_split[0].parse::<u32>().unwrap();
+    let seconds = cue_duration_split[1].parse::<u32>().unwrap();
+    let frames = cue_duration_split[2].parse::<u32>().unwrap();
+    let cue_duration = Some(CueDuration {
+        minutes,
+        seconds,
+        frames,
+    });
+    cue_duration
 }
 
 fn read_cue_file_content(cue_file_path: &Path, file: File) -> String {
