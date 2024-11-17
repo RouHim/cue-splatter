@@ -11,6 +11,7 @@ use lofty::file::TaggedFileExt;
 use lofty::tag::{Accessor, Tag, TagExt};
 use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
 use std::cmp::{Ordering, PartialEq, PartialOrd};
+use std::fs;
 use std::fs::{DirEntry, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -104,9 +105,9 @@ fn main() {
         .map(|mut cue_sheet| {
             let fix_action = verify_cue_files(&mut cue_sheet);
             match fix_action {
-                FixAction::Deleted => return None,
-                FixAction::Modified => {}
-                FixAction::None => {}
+                CueFixAction::Deleted => return None,
+                CueFixAction::Modified => {}
+                CueFixAction::None => {}
             }
 
             augment_with_ffmpeg_commands(&mut cue_sheet);
@@ -357,8 +358,8 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
     }
 }
 
-fn verify_cue_files(cue_sheet: &mut CueSheet) -> FixAction {
-    println!("🔍 Verifying cue file",);
+fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
+    println!("🔍 Verifying cue file", );
 
     // Verify that the cue file exists
     if !cue_sheet.cue_file_path.exists() {
@@ -376,13 +377,18 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> FixAction {
             cue_sheet.audio_file_path
         );
         match fix_cue_sheet_audio_file_reference(cue_sheet) {
-            FixAction::Modified => {
-                return verify_cue_files(cue_sheet);
+            CueFixAction::Modified => {
+                println!("🔄 Retrying verification ...");
+                let parse_cue_file = parse_cue_file(&cue_sheet.cue_file_path);
+                let mut new_cue_sheet = parse_cue_file.unwrap();
+                // TODO: this does not work
+                cue_sheet.audio_file_path = new_cue_sheet.audio_file_path.clone();
+                return verify_cue_files(&mut new_cue_sheet);
             }
-            FixAction::Deleted => {
-                return FixAction::Deleted;
+            CueFixAction::Deleted => {
+                return CueFixAction::Deleted;
             }
-            FixAction::None => {}
+            CueFixAction::None => {}
         }
     };
 
@@ -442,10 +448,10 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> FixAction {
     println!("✅ Cue file is valid");
     println!();
 
-    FixAction::None
+    CueFixAction::None
 }
 
-enum FixAction {
+enum CueFixAction {
     /// The cue file was modified by the fix action, we should retry the process
     Modified,
     /// The cue file was deleted by the fix action, we should skip the process
@@ -455,7 +461,8 @@ enum FixAction {
 }
 
 /// Lets the user fix the cue file
-fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> FixAction {
+fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> CueFixAction {
+    blue_ln!("🔧 {}", cue_sheet.cue_file_path.display());
     blue_ln!("🔧 What do you want to do with the cure file? (e)dit, (d)elete, (l)ist files, (v)iew, (r)etry, (q)uit: ");
 
     let mut input = String::new();
@@ -475,13 +482,16 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> FixAction {
             std::fs::remove_file(&cue_sheet.cue_file_path).unwrap();
             println!("🗑 Deleted cue file: {:?}", cue_sheet.cue_file_path);
 
-            FixAction::Deleted
+            CueFixAction::Deleted
         }
         "v" => {
-            Command::new("open")
-                .arg(cue_sheet.cue_file_path.as_os_str())
-                .status()
-                .expect("Failed to open file in viewer");
+            // Read and print cue file content
+            let data = fs::read_to_string(&cue_sheet.cue_file_path).unwrap();
+            // clear screen
+            println!();
+            println!();
+            println!("📄 Cue file content:");
+            println!("{}", data);
 
             ask_user_for_fix(cue_sheet)
         }
@@ -499,7 +509,7 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> FixAction {
 
             ask_user_for_fix(cue_sheet)
         }
-        "r" => FixAction::Modified,
+        "r" => CueFixAction::Modified,
         "q" => {
             println!("🚪 Exiting ...");
             std::process::exit(1);
@@ -514,7 +524,7 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> FixAction {
 /// Fixes the audio file reference in the cue sheet
 /// This happens e.g. when the case of the audio file path in the cue sheet does not match the actual file path
 /// This is a common issue on Windows file systems
-fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> FixAction {
+fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> CueFixAction {
     let broken_file_name = cue_sheet
         .audio_file_path
         .file_name()
@@ -531,7 +541,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> FixAction {
     let best_match_file_name = best_match.0.file_name().unwrap();
 
     // Ask user if this is ok
-    println!("🔧 Found a similar audio file in the same directory:",);
+    println!("🔧 Found a similar audio file in the same directory:", );
     let score = best_match.1;
 
     println!(
@@ -573,7 +583,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> FixAction {
     );
     cue_sheet.audio_file_path = best_match.0.clone();
 
-    FixAction::None
+    CueFixAction::None
 }
 
 /// Finds the best match for the audio file in the same directory
