@@ -372,34 +372,15 @@ fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
 fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
     println!("🔍 Verifying cue file",);
 
-    // Verify that the cue file exists
-    if !cue_sheet.cue_file_path.exists() {
-        eprintln!(
-            "❌ The cue sheet's audio file was not found: {:?}",
-            cue_sheet.cue_file_path
-        );
-        std::process::exit(1);
-    }
-
     // Verify that the audio file name exists
     if !cue_sheet.audio_file_path.exists() {
         yellow_ln!(
             "❌ The referenced audio file of the cue sheet was not found: {:?}",
             cue_sheet.audio_file_path
         );
-        match fix_cue_sheet_audio_file_reference(cue_sheet) {
-            CueFixAction::Modified => {
-                println!("🔄 Retrying verification ...");
-                let parse_cue_file = parse_cue_file(&cue_sheet.cue_file_path);
-                let mut new_cue_sheet = parse_cue_file.unwrap();
-                cue_sheet.audio_file_path = new_cue_sheet.audio_file_path.clone();
-                cue_sheet.audio_file_name = new_cue_sheet.audio_file_name.clone();
-                return verify_cue_files(&mut new_cue_sheet);
-            }
-            CueFixAction::Deleted => {
-                return CueFixAction::Deleted;
-            }
-            CueFixAction::None => {}
+        let user_action = fix_cue_sheet_audio_file_reference(cue_sheet);
+        if let Some(edit_action) = handle_user_action(cue_sheet, user_action) {
+            return edit_action;
         }
     };
 
@@ -409,7 +390,10 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
             "❌ No tracks found in cue file {}",
             cue_sheet.audio_file_name
         );
-        std::process::exit(1);
+        let user_action = ask_user_for_fix(cue_sheet);
+        if let Some(edit_action) = handle_user_action(cue_sheet, user_action) {
+            return edit_action;
+        }
     }
 
     // Verify that ffmpeg can process the input file
@@ -430,19 +414,25 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        std::process::exit(1);
+        let user_action = ask_user_for_fix(cue_sheet);
+        if let Some(edit_action) = handle_user_action(cue_sheet, user_action) {
+            return edit_action;
+        }
     }
 
     // Verify that all tracks have a start time
-    for track in &cue_sheet.tracks {
+    for track in cue_sheet.tracks.clone() {
         if track.start_time.is_none() {
             eprintln!("❌ No start time found for track {}", track.number);
-            std::process::exit(1);
+            let user_action = ask_user_for_fix(cue_sheet);
+            if let Some(edit_action) = handle_user_action(cue_sheet, user_action) {
+                return edit_action;
+            }
         }
     }
 
     // Verify that track start time is strictly monotonic growing
-    for (i, track) in cue_sheet.tracks.iter().enumerate() {
+    for (i, track) in cue_sheet.tracks.clone().iter().enumerate() {
         if i > 0 {
             let previous_track = &cue_sheet.tracks[i - 1];
             if track.start_time.unwrap() <= previous_track.start_time.unwrap() {
@@ -451,7 +441,10 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
                     "❌ Most likely the cue file is not valid: \"{}\"",
                     cue_sheet.cue_file_path.display()
                 );
-                std::process::exit(1);
+                let user_action = ask_user_for_fix(cue_sheet);
+                if let Some(edit_action) = handle_user_action(cue_sheet, user_action) {
+                    return edit_action;
+                }
             }
         }
     }
@@ -460,6 +453,24 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
     println!();
 
     CueFixAction::None
+}
+
+fn handle_user_action(cue_sheet: &mut CueSheet, user_action: CueFixAction) -> Option<CueFixAction> {
+    match user_action {
+        CueFixAction::Modified => {
+            println!("🔄 Retrying verification ...");
+            let parse_cue_file = parse_cue_file(&cue_sheet.cue_file_path);
+            let mut new_cue_sheet = parse_cue_file.unwrap();
+            cue_sheet.audio_file_path = new_cue_sheet.audio_file_path.clone();
+            cue_sheet.audio_file_name = new_cue_sheet.audio_file_name.clone();
+            return Some(verify_cue_files(&mut new_cue_sheet));
+        }
+        CueFixAction::Deleted => {
+            return Some(CueFixAction::Deleted);
+        }
+        CueFixAction::None => {}
+    }
+    None
 }
 
 enum CueFixAction {
