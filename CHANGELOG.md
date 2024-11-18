@@ -1,3 +1,10 @@
+## [1.7.4](https://github.com/RouHim/cue-splatter/compare/1.7.3...1.7.4) (2024-11-18)
+
+
+### Bug Fixes
+
+* wrong audio extension detection ([b491d40](https://github.com/RouHim/cue-splatter/commit/b491d40c4dbe620d377e5905c519e6b8a2876c14))
+
 ## [1.7.3](https://github.com/RouHim/cue-splatter/compare/1.7.2...1.7.3) (2024-11-17)
 
 ## [1.7.2](https://github.com/RouHim/cue-splatter/compare/1.7.1...1.7.2) (2024-11-17)
