@@ -526,7 +526,7 @@ fn ask_user_for_fix(cue_sheet: &mut CueSheet) -> CueFixAction {
                 .filter(|entry| entry.path().is_file())
                 .collect();
             for entry in files_in_directory {
-                println!("\t - {}", entry.path().display());
+                println!(" * {}", entry.path().display());
             }
 
             ask_user_for_fix(cue_sheet)
