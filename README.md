@@ -55,7 +55,7 @@ information, specified in the cue sheet.
 There is also a container image available, that can be used to run the application in a containerized environment.
 
 ```shell
-docker run -v $(pwd):/data docker.io/rouhim/cue-splatter:latest "path/to/cue/file.cue"
+docker run --rm -it -v $(pwd):/workdir docker.io/rouhim/cue-splatter:latest /workdir
 ```
 
 ## Development
