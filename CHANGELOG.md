@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/RouHim/cue-splatter/compare/1.7.5...1.8.0) (2024-11-22)
+
+
+### Bug Fixes
+
+* code style ([fb0d65d](https://github.com/RouHim/cue-splatter/commit/fb0d65d3919d11c114ebcd08c278dd5756611831))
+
+
+### Features
+
+* add readme ([04be44c](https://github.com/RouHim/cue-splatter/commit/04be44cf9b0d19f01241cdf99ae80f04fbcb501f))
+
 ## [1.7.5](https://github.com/RouHim/cue-splatter/compare/1.7.4...1.7.5) (2024-11-18)
 
 ## [1.7.4](https://github.com/RouHim/cue-splatter/compare/1.7.3...1.7.4) (2024-11-18)
