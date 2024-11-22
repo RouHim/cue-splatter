@@ -89,6 +89,7 @@ fn main() {
     check_tools(vec!["ffmpeg", "ffprobe"]);
 
     // Find cue files
+    println!("🔍 Searching for cue files in {}", cli_args.cue_file_or_folders.join(", "));
     let cue_file_paths = cli_args
         .cue_file_or_folders
         .iter()

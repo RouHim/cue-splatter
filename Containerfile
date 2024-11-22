@@ -12,8 +12,10 @@ RUN wget -qO- https://api.github.com/repos/RouHim/cue-splatter/releases/latest |
     grep "browser_download_url" | \
     cut -d : -f 2,3 | tr -d \" | \
     grep x86_64-unknown-linux-musl | \
-    xargs wget -O /app/cue-splatter
+    xargs wget -O /app/cue-splatter && \
+    chmod +x /app/cue-splatter
 
 WORKDIR /app
 
-ENTRYPOINT ["tail", "-f", "/dev/null"]
+ENTRYPOINT ["/app/cue-splatter"]
+CMD ["--help"]
