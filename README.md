@@ -47,7 +47,11 @@ information, specified in the cue sheet.
 
 ```shell
 ./cue-splatter "path/to/cue/file.cue"
+```
 
+You can also point to folders, which are processed recursively.
+```shell
+./cue-splatter "path/to/some/album a" "another/path/album b"
 ```
 
 ### Container usage
