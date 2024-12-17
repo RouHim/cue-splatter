@@ -1,3 +1,11 @@
+## [1.8.2](https://github.com/RouHim/cue-splatter/compare/1.8.1...1.8.2) (2024-12-17)
+
+
+### Bug Fixes
+
+* title without quotes ([79c854c](https://github.com/RouHim/cue-splatter/commit/79c854cf843a0cb2ade0cad19d006f8e15e10716))
+* title without quotes ([f89a00e](https://github.com/RouHim/cue-splatter/commit/f89a00e96be358f6b56dd101dacd2442c91fad8c))
+
 ## [1.8.1](https://github.com/RouHim/cue-splatter/compare/1.8.0...1.8.1) (2024-12-07)
 
 # [1.8.0](https://github.com/RouHim/cue-splatter/compare/1.7.5...1.8.0) (2024-11-22)
