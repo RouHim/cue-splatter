@@ -1143,7 +1143,6 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
                     audio_file_name =
                         cue_line_value[first_index_of_quote + 1..last_index_of_quote].to_string();
                 } else {
-                    // Example line: 201_va_-_ttf_12__omega_mix_2000_cd2-nbd.mp3 MP3
                     audio_file_name = cue_line_value
                         .split_whitespace()
                         .next()
