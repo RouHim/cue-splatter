@@ -1,3 +1,5 @@
+## [1.8.5](https://github.com/RouHim/cue-splatter/compare/1.8.4...1.8.5) (2025-01-09)
+
 ## [1.8.4](https://github.com/RouHim/cue-splatter/compare/1.8.3...1.8.4) (2025-01-02)
 
 ## [1.8.3](https://github.com/RouHim/cue-splatter/compare/1.8.2...1.8.3) (2024-12-21)
