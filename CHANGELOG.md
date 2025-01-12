@@ -1,3 +1,10 @@
+## [1.8.6](https://github.com/RouHim/cue-splatter/compare/1.8.5...1.8.6) (2025-01-12)
+
+
+### Bug Fixes
+
+* wrong codec and length detection ([ce476b3](https://github.com/RouHim/cue-splatter/commit/ce476b316fc7d6014b4f6cd2c7b4bed4e7f88840))
+
 ## [1.8.5](https://github.com/RouHim/cue-splatter/compare/1.8.4...1.8.5) (2025-01-09)
 
 ## [1.8.4](https://github.com/RouHim/cue-splatter/compare/1.8.3...1.8.4) (2025-01-02)
