@@ -19,8 +19,8 @@ use std::process::Command;
 use std::sync::RwLock;
 use std::time::Duration;
 
-#[derive(Debug, FromArgs)]
 /// Split audio files based on cue sheets
+#[derive(Debug, FromArgs)]
 struct CliArgs {
     /// only print the ffmpeg commands
     #[argh(switch)]
@@ -29,6 +29,10 @@ struct CliArgs {
     /// move the audio and cue file to the output dir
     #[argh(switch)]
     transfer: bool,
+
+    /// delete the original full-length audio file after successful splitting
+    #[argh(switch)]
+    delete: bool,
 
     /// file or folder paths to parse
     /// default is "."
@@ -137,7 +141,12 @@ fn main() {
 
             // Moves the audio file to the output dir
             if cli_args.transfer {
-                move_input_files(cue_sheets);
+                move_input_files(cue_sheets.clone());
+            }
+
+            // Delete the original full-length audio file
+            if cli_args.delete {
+                delete_original_audio_files(cue_sheets);
             }
         } else {
             report_failed_tracks(failed_tracks);
@@ -1311,5 +1320,20 @@ fn read_cue_file_content(cue_file_path: &Path, file: File) -> String {
             "{}",
             format!("❌ Could not decode cue file {}", cue_file_path.display())
         );
+    }
+}
+
+fn delete_original_audio_files(cue_sheets: Vec<CueSheet>) {
+    println!("🗑 Deleting original full-length audio files");
+    for cue_sheet in cue_sheets {
+        if let Err(e) = fs::remove_file(&cue_sheet.audio_file_path) {
+            eprintln!(
+                "❌ Failed to delete file {}: {}",
+                cue_sheet.audio_file_path.display(),
+                e
+            );
+        } else {
+            println!("🗑 Deleted file: {}", cue_sheet.audio_file_path.display());
+        }
     }
 }
