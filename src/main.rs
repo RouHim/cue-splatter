@@ -26,7 +26,7 @@ struct CliArgs {
     #[argh(switch)]
     dry_run: bool,
 
-    /// move the audio and cue file to the output dir
+    /// move the original full-length audio file and cue file to the output dir
     #[argh(switch)]
     transfer: bool,
 
