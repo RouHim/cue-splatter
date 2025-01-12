@@ -608,6 +608,7 @@ fn fix_cue_sheet_audio_file_reference(cue_sheet: &mut CueSheet) -> CueFixAction 
         best_match_file_name
     );
     cue_sheet.audio_file_path = best_match.0.clone();
+    cue_sheet.audio_file_name = best_match_file_name.to_str().unwrap().to_string();
 
     CueFixAction::None
 }
@@ -881,17 +882,24 @@ fn check_tools(commands: Vec<&str>) {
 }
 
 fn augment_with_ffmpeg_commands(cue_sheet: &mut CueSheet) {
+    let output_codec = detect_output_codec(cue_sheet);
+
     let augmented_tracks: Vec<Track> = cue_sheet
         .tracks
         .iter()
         .enumerate()
-        .map(|(index, track)| build_ffmpeg_command(cue_sheet, index, track))
+        .map(|(index, track)| build_ffmpeg_command(cue_sheet, index, track, &output_codec))
         .collect();
 
     cue_sheet.tracks = augmented_tracks;
 }
 
-fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Track {
+fn build_ffmpeg_command(
+    cue_sheet: &CueSheet,
+    index: usize,
+    track: &Track,
+    output_codec: &str,
+) -> Track {
     let cue_duration = track.start_time.as_ref().unwrap();
 
     // Convert frames to milliseconds (1 CDDA frame = 1/75 second)
@@ -926,9 +934,22 @@ fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Tr
     let audio_file_path = cue_sheet.audio_file_path.to_str().unwrap();
     let output_file_name = build_output_name(cue_sheet, track);
 
+    // For lossless codecs we need to re-encode the audio
+    // Lossless codecs such as FLAC or ALAC store the exact number of samples and the sampling rate in their headers.
+    // Thus, we need to re-encode the audio to apply the start and end time.
+    let output_codec_parameter = if ["flac", "alac", "wav", "aiff"].contains(&output_codec) {
+        format!("-c:a {}", output_codec)
+    } else {
+        "-c:a copy".to_string()
+    };
+
     let command = format!(
-        "ffmpeg -y -i \"{}\" -map_metadata -1 -acodec copy -ss \"{}\" {} \"{}\"",
-        audio_file_path, ffmpeg_start_time, ffmpeg_end_time, output_file_name
+        "ffmpeg -y -i \"{}\" -map_metadata -1 -ss \"{}\" {} {} \"{}\"",
+        audio_file_path,
+        ffmpeg_start_time,
+        ffmpeg_end_time,
+        output_codec_parameter,
+        output_file_name
     );
 
     Track {
@@ -938,6 +959,41 @@ fn build_ffmpeg_command(cue_sheet: &CueSheet, index: usize, track: &Track) -> Tr
         start_time: track.start_time,
         output_file: Some(PathBuf::from(output_file_name)),
         ffmpeg_command: Some(command),
+    }
+}
+
+/// Detects the codec of the audio file associated with the given `CueSheet`.
+///
+/// This function uses `ffprobe` to determine the codec of the audio file. It constructs
+/// a command to run `ffprobe` with the necessary arguments to extract the codec name
+/// from the audio file.
+///
+/// # Returns
+///
+/// A `String` containing the codec name of the audio file.
+fn detect_output_codec(cue_sheet: &CueSheet) -> String {
+    // Construct the ffprobe command to extract the codec name from the audio file
+    let ffprobe_cmd = format!(
+        "ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 \"{}\"",
+        cue_sheet.audio_file_path.display()
+    );
+
+    // Execute the ffprobe command
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(ffprobe_cmd)
+        .output()
+        .expect("Failed to execute command");
+
+    // Check if the command was successful and return the codec name
+    if output.status.success() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        // Panic if the codec detection fails
+        panic!(
+            "Failed to detect codec for file: {}",
+            cue_sheet.audio_file_path.display()
+        );
     }
 }
 
