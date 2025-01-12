@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/RouHim/cue-splatter/compare/1.8.6...1.9.0) (2025-01-12)
+
+
+### Features
+
+* add the ability to delete the original audio file ([3c18ac3](https://github.com/RouHim/cue-splatter/commit/3c18ac3149f4a49861ea9f84d9c0960bc73baa0e))
+
 ## [1.8.6](https://github.com/RouHim/cue-splatter/compare/1.8.5...1.8.6) (2025-01-12)
 
 
