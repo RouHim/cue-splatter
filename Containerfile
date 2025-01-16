@@ -1,4 +1,4 @@
-FROM alpine:20240923
+FROM alpine:20250108
 ENV EDITOR=micro
 RUN apk update && apk add --no-cache ffmpeg nano micro wget
 
