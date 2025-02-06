@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/RouHim/cue-splatter/compare/1.9.3...1.10.0) (2025-02-06)
+
+
+### Features
+
+* do not fail, if audio file not found ([9d3dd4c](https://github.com/RouHim/cue-splatter/commit/9d3dd4cff7a9d06bac6968bd20d22e5b9de686f3))
+
 ## [1.9.3](https://github.com/RouHim/cue-splatter/compare/1.9.2...1.9.3) (2025-01-31)
 
 ## [1.9.2](https://github.com/RouHim/cue-splatter/compare/1.9.1...1.9.2) (2025-01-17)
