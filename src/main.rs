@@ -648,7 +648,7 @@ fn find_best_match(
             "❌ The referenced audio file of the cue sheet was not found: {:?}",
             cue_sheet.audio_file_path
         );
-        std::process::exit(1);
+        return None;
     };
 
     // Calculate the levenshtein distance between the broken file name and the actual file name
