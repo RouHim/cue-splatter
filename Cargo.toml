@@ -7,7 +7,7 @@ edition = "2021"
 chardet = "0.2.4"# Detects the encoding of a byte stream
 encoding = "0.2.33"# Character encoding support
 rayon = "1.10"# Data parallelism library
-indicatif = { version = "0.17", features = ["rayon", "improved_unicode"] } # Progress bar
+indicatif = { version = "0.18", features = ["rayon", "improved_unicode"] } # Progress bar
 argh = "0.1" # A simple argument parser
 levenshtein = "1.0.5"# Levenshtein distance
 colour = "2.0"# Terminal colours
