@@ -1,3 +1,5 @@
+## [1.10.16](https://github.com/RouHim/cue-splatter/compare/1.10.15...1.10.16) (2026-04-30)
+
 ## [1.10.15](https://github.com/RouHim/cue-splatter/compare/1.10.14...1.10.15) (2026-04-15)
 
 ## [1.10.14](https://github.com/RouHim/cue-splatter/compare/1.10.13...1.10.14) (2026-03-14)
