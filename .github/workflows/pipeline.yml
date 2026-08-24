@@ -11,23 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-
-  #  check-repo:
-  #    name: Check git repository
-  #    runs-on: ubuntu-latest
-  #    steps:
-  #      - name: Checkout code
-  #        uses: actions/checkout@v4
-  #
-  #      - name: Run Trivy vulnerability scanner
-  #        uses: aquasecurity/trivy-action@master
-  #        with:
-  #          scan-type: 'fs'
-  #          format: 'table'
-  #          exit-code: '1'
-  #          ignore-unfixed: true
-  #          severity: 'CRITICAL,HIGH'
-
   check-code-style:
     name: Check code style
     runs-on: ubuntu-latest

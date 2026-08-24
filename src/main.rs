@@ -1,5 +1,7 @@
+mod matching;
 mod updater;
 
+use crate::matching::{find_best_hamming_match, find_best_levenshtein_match};
 use argh::FromArgs;
 use chardet::charset2encoding;
 use colour::{blue_ln, green_ln, red_ln, yellow_ln};
@@ -58,7 +60,11 @@ struct Track {
     start_time: Option<CueDuration>,
     output_file: Option<PathBuf>,
     ffmpeg_command: Option<String>,
+    ffmpeg_args: Option<Vec<String>>,
 }
+
+/// Number of CDDA frames per second (1 frame = 1/75 second)
+const CDDA_FRAMES_PER_SECOND: u32 = 75;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 struct CueDuration {
@@ -349,7 +355,7 @@ fn create_spinner(multi_progress_bar: &MultiProgress, track: &Track) -> Progress
                     .template("{spinner} {wide_msg}")
                     .unwrap(),
             )
-            .with_message(format!("Splitting into: {}", &output_file_name)),
+            .with_message(format!("Splitting into: {}", output_file_name)),
     );
 
     split_command_bar.enable_steady_tick(Duration::from_millis(100));
@@ -360,16 +366,13 @@ fn create_spinner(multi_progress_bar: &MultiProgress, track: &Track) -> Progress
 /// Runs the ffmpeg command to split the audio file
 /// Returns if the command was successful and the error message
 fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
-    let ffmpeg_command = track.ffmpeg_command.as_ref().unwrap();
-
     // Make sure all sub dirs exist
     let output_file = track.output_file.as_ref().unwrap();
     let output_dir = output_file.parent().unwrap();
     fs::create_dir_all(output_dir).unwrap();
 
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(ffmpeg_command)
+    let output = Command::new("ffmpeg")
+        .args(track.ffmpeg_args.as_ref().unwrap())
         .output()
         .expect("Failed to execute command");
 
@@ -411,15 +414,20 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
 
     // Verify that ffmpeg can process the input file
     // Example: ffprobe -v error -select_streams a:0 -count_packets -show_entries stream=codec_type,codec_name -of csv=p=0 input_file.mp3
-    let ffprobe_cmd = format!(
-        "ffprobe -v error -select_streams a:0 -count_packets -show_entries stream=codec_type,codec_name -of csv=p=0 \"{}\"",
-        cue_sheet.audio_file_path.display()
+    let output = run_ffprobe(
+        &[
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-count_packets",
+            "-show_entries",
+            "stream=codec_type,codec_name",
+            "-of",
+            "csv=p=0",
+        ],
+        &cue_sheet.audio_file_path,
     );
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(ffprobe_cmd)
-        .output()
-        .expect("Failed to execute command");
     if !output.status.success() {
         eprintln!(
             "❌ ffmpeg failed to process file, most likely the file is corrupt or codec is not supported: {}\nstdout: {}\nstderr: {}",
@@ -662,11 +670,7 @@ fn find_best_match(
     // If they are equal, take the levenshtein result
     if let Some(levenshtein_result) = &levenshtein_result {
         if let Some(hamming_result) = &hamming_result {
-            if levenshtein_result.0 == hamming_result.0 {
-                return Some(levenshtein_result.clone());
-            }
-            // If they differ, take the one with the better score
-            else if levenshtein_result.1 > hamming_result.1 {
+            if levenshtein_result.0 == hamming_result.0 || levenshtein_result.1 > hamming_result.1 {
                 return Some(levenshtein_result.clone());
             } else {
                 return Some(hamming_result.clone());
@@ -675,10 +679,10 @@ fn find_best_match(
     }
 
     // If one is missing but the other is present, return the present one
-    if levenshtein_result.is_some() && hamming_result.is_none() {
-        return Some(levenshtein_result.unwrap());
-    } else if levenshtein_result.is_none() && hamming_result.is_some() {
-        return Some(hamming_result.unwrap());
+    match (&levenshtein_result, &hamming_result) {
+        (Some(lev), None) => return Some(lev.clone()),
+        (None, Some(ham)) => return Some(ham.clone()),
+        _ => {}
     }
 
     yellow_ln!(
@@ -703,18 +707,18 @@ fn audio_playtime_matches(entry: &DirEntry, last_track: &Track) -> bool {
 /// Returns the length in seconds
 /// Example call: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 input.mp3
 fn read_audio_playtime(entry: &DirEntry) -> Option<u32> {
-    // Build ffprobe command
-    let ffprobe_command = format!(
-        "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{}\"",
-        entry.path().display()
-    );
-
     // Run ffprobe command
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(ffprobe_command)
-        .output()
-        .expect("Failed to execute command");
+    let output = run_ffprobe(
+        &[
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ],
+        &entry.path(),
+    );
 
     // Check if ffprobe command was successful
     if !output.status.success() {
@@ -727,120 +731,6 @@ fn read_audio_playtime(entry: &DirEntry) -> Option<u32> {
         Some(playtime as u32)
     } else {
         None
-    }
-}
-
-fn find_best_hamming_match(
-    broken_file_name: &str,
-    audio_files_in_same_dir: &[PathBuf],
-) -> Option<(PathBuf, usize)> {
-    let audio_files_ham: Vec<(PathBuf, usize)> = audio_files_in_same_dir
-        .iter()
-        .map(|audio_entry| {
-            let entry_file_name = audio_entry.file_name();
-            let entry_file_name = entry_file_name.unwrap().to_str().unwrap();
-
-            // Remove extension
-            let entry_file_name = entry_file_name.split('.').next().unwrap();
-            let broken_file_name = broken_file_name.split('.').next().unwrap();
-
-            (
-                audio_entry.clone(),
-                hamming_distance(entry_file_name.as_bytes(), broken_file_name.as_bytes()),
-            )
-        })
-        .collect();
-
-    // If we have multiple entries with the same distance, we can't determine the best match
-    // In this case, we return None
-    let all_have_same_distance = audio_files_ham
-        .iter()
-        .all(|(_, distance)| *distance == audio_files_ham[0].1);
-    if audio_files_ham.len() > 1 && all_have_same_distance {
-        return None;
-    }
-
-    // Find the best match (smallest distance)
-    let best_match = audio_files_ham.iter().min_by(|a, b| a.1.cmp(&b.1)).unwrap();
-
-    // Calculate the success rate
-    let best_match_file_name = best_match.0.file_name().unwrap().to_str().unwrap();
-
-    // Remove extension
-    let best_match_file_name = best_match_file_name.split('.').next().unwrap();
-    let broken_file_name = broken_file_name.split('.').next().unwrap();
-
-    let hamming_distance = best_match.1;
-    let shortest_length = size_of_shortest(broken_file_name, best_match_file_name);
-
-    let success_rate = 100 - (hamming_distance * 100 / shortest_length);
-
-    Some((best_match.0.clone(), success_rate))
-}
-
-fn hamming_distance(x: &[u8], y: &[u8]) -> usize {
-    x.iter().zip(y.iter()).filter(|(a, b)| a != b).count()
-}
-
-fn find_best_levenshtein_match(
-    broken_file_name: &str,
-    audio_files_in_same_dir: &[PathBuf],
-) -> Option<(PathBuf, usize)> {
-    let audio_files_lev: Vec<(PathBuf, usize)> = audio_files_in_same_dir
-        .iter()
-        .map(|audio_entry| {
-            let entry_file_name = audio_entry.file_name();
-            let entry_file_name = entry_file_name.unwrap().to_str().unwrap();
-
-            // Remove extension
-            let entry_file_name = entry_file_name.split('.').next().unwrap();
-            let broken_file_name = broken_file_name.split('.').next().unwrap();
-
-            (
-                audio_entry.clone(),
-                levenshtein::levenshtein(broken_file_name, entry_file_name),
-            )
-        })
-        .collect();
-
-    // If we have multiple entries with the same distance, we can't determine the best match
-    // In this case, we return None
-    let all_have_same_distance = audio_files_lev
-        .iter()
-        .all(|(_, distance)| *distance == audio_files_lev[0].1);
-    if audio_files_lev.len() > 1 && all_have_same_distance {
-        return None;
-    }
-
-    // Find the best match (smallest distance)
-    let best_match = audio_files_lev.iter().min_by(|a, b| a.1.cmp(&b.1)).unwrap();
-
-    // Calculate the success rate
-    let file_name_length = size_of_longest(
-        broken_file_name,
-        best_match.0.file_name().unwrap().to_str().unwrap(),
-    );
-    let levenshtein_distance = best_match.1;
-    let success_rate = 100 - (levenshtein_distance * 100 / file_name_length);
-
-    Some((best_match.0.clone(), success_rate))
-}
-
-// Returns the length of the longest string
-fn size_of_longest(a: &str, b: &str) -> usize {
-    if a.len() > b.len() {
-        a.len()
-    } else {
-        b.len()
-    }
-}
-
-// Returns the length of the shortest string
-fn size_of_shortest(a: &str, b: &str) -> usize {
-    if a.len() < b.len() {
-        a.len()
-    } else {
-        b.len()
     }
 }
 
@@ -912,7 +802,7 @@ fn build_ffmpeg_command(
     let cue_duration = track.start_time.as_ref().unwrap();
 
     // Convert frames to milliseconds (1 CDDA frame = 1/75 second)
-    let milliseconds = cue_duration.frames * 1000 / 75;
+    let milliseconds = cue_duration.frames * 1000 / CDDA_FRAMES_PER_SECOND;
 
     // Convert minutes to hours and remaining minutes
     let hours = cue_duration.minutes / 60;
@@ -925,19 +815,22 @@ fn build_ffmpeg_command(
     );
 
     // Calculate the end time based on the next track, if we have the last track, skip this param
-    // let ffmpeg_end_time_param = format!("-to {:02}:{:02}:{:02}.{:03}", hours, minutes, cue_duration.seconds + 30, milliseconds);
-    let ffmpeg_end_time = if index < cue_sheet.tracks.len() - 1 {
+    let ffmpeg_end_time_value = if index < cue_sheet.tracks.len() - 1 {
         let next_track = &cue_sheet.tracks[index + 1];
         let next_cue_duration = next_track.start_time.as_ref().unwrap();
-        let next_milliseconds = next_cue_duration.frames * 1000 / 75;
+        let next_milliseconds = next_cue_duration.frames * 1000 / CDDA_FRAMES_PER_SECOND;
         let next_hours = next_cue_duration.minutes / 60;
         let next_minutes = next_cue_duration.minutes % 60;
-        format!(
-            "-to \"{:02}:{:02}:{:02}.{:03}\"",
+        Some(format!(
+            "{:02}:{:02}:{:02}.{:03}",
             next_hours, next_minutes, next_cue_duration.seconds, next_milliseconds
-        )
+        ))
     } else {
-        "".to_string()
+        None
+    };
+    let ffmpeg_end_time = match &ffmpeg_end_time_value {
+        Some(value) => format!("-to \"{}\"", value),
+        None => String::new(),
     };
 
     let audio_file_path = cue_sheet.audio_file_path.to_str().unwrap();
@@ -945,12 +838,12 @@ fn build_ffmpeg_command(
 
     // For lossless codecs we need to re-encode the audio
     // Lossless codecs such as FLAC or ALAC store the exact number of samples and the sampling rate in their headers.
-    // Thus, we need to re-encode the audio to apply the start and end time.
-    let output_codec_parameter = if ["flac", "alac", "wav", "aiff"].contains(&output_codec) {
-        format!("-c:a {}", output_codec)
+    let codec_argument = if ["flac", "alac", "wav", "aiff"].contains(&output_codec) {
+        output_codec.to_string()
     } else {
-        "-c:a copy".to_string()
+        "copy".to_string()
     };
+    let output_codec_parameter = format!("-c:a {}", codec_argument);
 
     let command = format!(
         "ffmpeg -y -i \"{}\" -map_metadata -1 -ss \"{}\" {} {} \"{}\"",
@@ -961,14 +854,41 @@ fn build_ffmpeg_command(
         output_file_name
     );
 
+    let mut ffmpeg_args: Vec<String> = vec![
+        "-y".to_string(),
+        "-i".to_string(),
+        audio_file_path.to_string(),
+        "-map_metadata".to_string(),
+        "-1".to_string(),
+        "-ss".to_string(),
+        ffmpeg_start_time.clone(),
+    ];
+    if let Some(end_time) = &ffmpeg_end_time_value {
+        ffmpeg_args.push("-to".to_string());
+        ffmpeg_args.push(end_time.clone());
+    }
+    ffmpeg_args.push("-c:a".to_string());
+    ffmpeg_args.push(codec_argument);
+    ffmpeg_args.push(output_file_name.clone());
+
     Track {
         number: track.number,
         title: track.title.clone(),
         artist: track.artist.clone(),
         start_time: track.start_time,
         output_file: Some(PathBuf::from(output_file_name)),
+        ffmpeg_args: Some(ffmpeg_args),
         ffmpeg_command: Some(command),
     }
+}
+
+/// Runs ffprobe with the given arguments on the given audio file.
+fn run_ffprobe(args: &[&str], audio_file_path: &Path) -> std::process::Output {
+    Command::new("ffprobe")
+        .args(args)
+        .arg(audio_file_path)
+        .output()
+        .expect("Failed to execute command")
 }
 
 /// Detects the codec of the audio file associated with the given `CueSheet`.
@@ -981,18 +901,20 @@ fn build_ffmpeg_command(
 ///
 /// A `String` containing the codec name of the audio file.
 fn detect_output_codec(cue_sheet: &CueSheet) -> String {
-    // Construct the ffprobe command to extract the codec name from the audio file
-    let ffprobe_cmd = format!(
-        "ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 \"{}\"",
-        cue_sheet.audio_file_path.display()
-    );
-
     // Execute the ffprobe command
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(ffprobe_cmd)
-        .output()
-        .expect("Failed to execute command");
+    let output = run_ffprobe(
+        &[
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=codec_name",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ],
+        &cue_sheet.audio_file_path,
+    );
 
     // Check if the command was successful and return the codec name
     if output.status.success() {
@@ -1010,7 +932,7 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
     let extension = cue_sheet
         .audio_file_name
         .split('.')
-        .last()
+        .next_back()
         .unwrap_or_else(|| {
             eprintln!(
                 "❌ Could not determine extension for file {}",
@@ -1233,6 +1155,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
                     artist: None,
                     output_file: None,
                     ffmpeg_command: None,
+                    ffmpeg_args: None,
                 });
             }
             "TITLE" => {
@@ -1277,7 +1200,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
 }
 
 fn parse_cue_duration(cue_line_value: &str, track: &mut Track) -> Option<CueDuration> {
-    let cue_duration = cue_line_value.split(' ').last().unwrap();
+    let cue_duration = cue_line_value.split(' ').next_back().unwrap();
     let cue_duration_split: Vec<&str> = cue_duration.split(':').collect();
     if cue_duration_split.len() != 3 {
         eprintln!(
@@ -1335,5 +1258,217 @@ fn delete_original_audio_files(cue_sheets: Vec<CueSheet>) {
         } else {
             println!("🗑 Deleted file: {}", cue_sheet.audio_file_path.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates a cue sheet fixture in an isolated temp directory.
+    /// A single `.cue` file is placed inside so that `is_multi_disc` returns false.
+    fn fixture_cue_sheet(tracks: Vec<Track>) -> CueSheet {
+        let dir = std::env::temp_dir().join(format!("cue_splatter_test_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let cue_file_path = dir.join("album.cue");
+        fs::write(&cue_file_path, b"").unwrap();
+
+        CueSheet {
+            cue_file_path,
+            audio_file_path: dir.join("song.wav"),
+            audio_file_name: "song.wav".to_string(),
+            output_dir: None,
+            title: None,
+            tracks,
+        }
+    }
+
+    fn fixture_track(number: u32, title: &str, start_time: Option<CueDuration>) -> Track {
+        Track {
+            number,
+            title: Some(title.to_string()),
+            artist: None,
+            start_time,
+            ffmpeg_args: None,
+            output_file: None,
+            ffmpeg_command: None,
+        }
+    }
+
+    #[test]
+    fn lossless_codec_last_track_has_no_end_time() {
+        let cue_sheet = fixture_cue_sheet(vec![fixture_track(
+            1,
+            "Song",
+            Some(CueDuration {
+                minutes: 1,
+                seconds: 2,
+                frames: 37, // 37 * 1000 / 75 = 493 ms
+            }),
+        )]);
+        let audio_path = cue_sheet.audio_file_path.to_str().unwrap().to_string();
+
+        let track = build_ffmpeg_command(&cue_sheet, 0, &cue_sheet.tracks[0], "flac");
+
+        let audio_dir = cue_sheet
+            .audio_file_path
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Byte-identical expected string. Note: without an end time the format string
+        // leaves TWO consecutive spaces between the -ss value and the codec parameter.
+        // build_output_name joins the audio file's parent with "." as non-multidisc sub dir.
+        let expected = format!(
+            "ffmpeg -y -i \"{}\" -map_metadata -1 -ss \"00:01:02.493\"  -c:a flac \"{}/./01 Song.wav\"",
+            audio_path, audio_dir
+        );
+
+        assert_eq!(track.ffmpeg_command.as_ref().unwrap(), &expected);
+
+        let command = track.ffmpeg_command.as_ref().unwrap();
+        assert!(command.starts_with("ffmpeg -y -i "));
+        assert!(command.contains("-ss \"00:01:02.493\""));
+        assert!(command.ends_with(&format!("\"{}/./01 Song.wav\"", audio_dir)));
+    }
+
+    #[test]
+    fn non_lossless_codec_track_with_next_track_has_end_time() {
+        let cue_sheet = fixture_cue_sheet(vec![
+            fixture_track(
+                2,
+                "Second",
+                Some(CueDuration {
+                    minutes: 1,
+                    seconds: 2,
+                    frames: 37,
+                }),
+            ),
+            fixture_track(
+                3,
+                "Third",
+                Some(CueDuration {
+                    minutes: 5,
+                    seconds: 10,
+                    frames: 0, // end time "00:05:10.000"
+                }),
+            ),
+        ]);
+        let audio_path = cue_sheet.audio_file_path.to_str().unwrap().to_string();
+
+        let track = build_ffmpeg_command(&cue_sheet, 0, &cue_sheet.tracks[0], "mp3");
+        let audio_dir = cue_sheet
+            .audio_file_path
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let expected = format!(
+            "ffmpeg -y -i \"{}\" -map_metadata -1 -ss \"00:01:02.493\" -to \"00:05:10.000\" -c:a copy \"{}/./02 Second.wav\"",
+            audio_path, audio_dir
+        );
+        assert_eq!(track.ffmpeg_command.as_ref().unwrap(), &expected);
+
+        let command = track.ffmpeg_command.as_ref().unwrap();
+        assert!(command.starts_with("ffmpeg -y -i "));
+        assert!(command.contains("-ss \"00:01:02.493\""));
+        assert!(command.contains("-to \"00:05:10.000\""));
+        assert!(command.ends_with(&format!("\"{}/./02 Second.wav\"", audio_dir)));
+    }
+    #[test]
+    fn ffmpeg_args_render_matches_command_tokens() {
+        let cue_sheet = fixture_cue_sheet(vec![
+            fixture_track(
+                1,
+                "Song",
+                Some(CueDuration {
+                    minutes: 1,
+                    seconds: 2,
+                    frames: 37,
+                }),
+            ),
+            fixture_track(
+                2,
+                "Second",
+                Some(CueDuration {
+                    minutes: 5,
+                    seconds: 10,
+                    frames: 0,
+                }),
+            ),
+        ]);
+
+        for index in 0..cue_sheet.tracks.len() {
+            let track = build_ffmpeg_command(&cue_sheet, index, &cue_sheet.tracks[index], "flac");
+            let args = track.ffmpeg_args.as_ref().unwrap();
+            let command = track.ffmpeg_command.as_ref().unwrap().replace('"', "");
+
+            // Each argument must appear in order within the quote-stripped command string.
+            let mut search_from = 0;
+            for arg in args {
+                let position = command[search_from..]
+                    .find(arg.as_str())
+                    .unwrap_or_else(|| panic!("arg {:?} not found in command {:?}", arg, command));
+                search_from += position + arg.len();
+            }
+        }
+    }
+
+    #[test]
+    fn parse_cue_duration_parses_last_space_token() {
+        let mut track = fixture_track(1, "T", None);
+        let duration = parse_cue_duration("INDEX 01 04:35:12", &mut track).unwrap();
+        assert_eq!(
+            duration,
+            CueDuration {
+                minutes: 4,
+                seconds: 35,
+                frames: 12
+            }
+        );
+    }
+
+    #[test]
+    fn find_best_levenshtein_match_prefers_closest_name() {
+        let files = vec![
+            PathBuf::from("/music/01 Artist - Song.wav"),
+            PathBuf::from("/music/02 Other Song.wav"),
+        ];
+        let (path, rate) = find_best_levenshtein_match("01 Artist - Sonng.flac", &files).unwrap();
+        assert_eq!(path, PathBuf::from("/music/01 Artist - Song.wav"));
+        assert!(rate <= 100);
+    }
+
+    #[test]
+    fn find_best_levenshtein_match_tie_returns_none() {
+        let files = vec![
+            PathBuf::from("/music/aa.wav"),
+            PathBuf::from("/music/bb.wav"),
+        ];
+        assert_eq!(find_best_levenshtein_match("cc.flac", &files), None);
+    }
+
+    #[test]
+    fn find_best_hamming_match_prefers_closest_name() {
+        let files = vec![
+            PathBuf::from("/music/aaaa.wav"),
+            PathBuf::from("/music/zzzz.wav"),
+        ];
+        let (path, rate) = find_best_hamming_match("aaab.flac", &files).unwrap();
+        assert_eq!(path, PathBuf::from("/music/aaaa.wav"));
+        assert!(rate <= 100);
+    }
+
+    #[test]
+    fn find_best_hamming_match_tie_returns_none() {
+        let files = vec![
+            PathBuf::from("/music/aa.wav"),
+            PathBuf::from("/music/bb.wav"),
+        ];
+        assert_eq!(find_best_hamming_match("cc.flac", &files), None);
     }
 }
