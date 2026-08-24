@@ -1530,4 +1530,52 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn parse_cue_duration_parses_last_space_token() {
+        let mut track = fixture_track(1, "T", None);
+        let duration = parse_cue_duration("INDEX 01 04:35:12", &mut track).unwrap();
+        assert_eq!(
+            duration,
+            CueDuration {
+                minutes: 4,
+                seconds: 35,
+                frames: 12
+            }
+        );
+    }
+
+    #[test]
+    fn find_best_levenshtein_match_prefers_closest_name() {
+        let files = vec![
+            PathBuf::from("/music/01 Artist - Song.wav"),
+            PathBuf::from("/music/02 Other Song.wav"),
+        ];
+        let (path, rate) = find_best_levenshtein_match("01 Artist - Sonng.flac", &files).unwrap();
+        assert_eq!(path, PathBuf::from("/music/01 Artist - Song.wav"));
+        assert!(rate <= 100);
+    }
+
+    #[test]
+    fn find_best_levenshtein_match_tie_returns_none() {
+        let files = vec![PathBuf::from("/music/aa.wav"), PathBuf::from("/music/bb.wav")];
+        assert_eq!(find_best_levenshtein_match("cc.flac", &files), None);
+    }
+
+    #[test]
+    fn find_best_hamming_match_prefers_closest_name() {
+        let files = vec![
+            PathBuf::from("/music/aaaa.wav"),
+            PathBuf::from("/music/zzzz.wav"),
+        ];
+        let (path, rate) = find_best_hamming_match("aaab.flac", &files).unwrap();
+        assert_eq!(path, PathBuf::from("/music/aaaa.wav"));
+        assert!(rate <= 100);
+    }
+
+    #[test]
+    fn find_best_hamming_match_tie_returns_none() {
+        let files = vec![PathBuf::from("/music/aa.wav"), PathBuf::from("/music/bb.wav")];
+        assert_eq!(find_best_hamming_match("cc.flac", &files), None);
+    }
 }
