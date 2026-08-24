@@ -1,5 +1,5 @@
-mod updater;
 mod matching;
+mod updater;
 
 use crate::matching::{find_best_hamming_match, find_best_levenshtein_match};
 use argh::FromArgs;
@@ -1405,11 +1405,7 @@ mod tests {
         for index in 0..cue_sheet.tracks.len() {
             let track = build_ffmpeg_command(&cue_sheet, index, &cue_sheet.tracks[index], "flac");
             let args = track.ffmpeg_args.as_ref().unwrap();
-            let command = track
-                .ffmpeg_command
-                .as_ref()
-                .unwrap()
-                .replace('"', "");
+            let command = track.ffmpeg_command.as_ref().unwrap().replace('"', "");
 
             // Each argument must appear in order within the quote-stripped command string.
             let mut search_from = 0;
@@ -1449,7 +1445,10 @@ mod tests {
 
     #[test]
     fn find_best_levenshtein_match_tie_returns_none() {
-        let files = vec![PathBuf::from("/music/aa.wav"), PathBuf::from("/music/bb.wav")];
+        let files = vec![
+            PathBuf::from("/music/aa.wav"),
+            PathBuf::from("/music/bb.wav"),
+        ];
         assert_eq!(find_best_levenshtein_match("cc.flac", &files), None);
     }
 
@@ -1466,7 +1465,10 @@ mod tests {
 
     #[test]
     fn find_best_hamming_match_tie_returns_none() {
-        let files = vec![PathBuf::from("/music/aa.wav"), PathBuf::from("/music/bb.wav")];
+        let files = vec![
+            PathBuf::from("/music/aa.wav"),
+            PathBuf::from("/music/bb.wav"),
+        ];
         assert_eq!(find_best_hamming_match("cc.flac", &files), None);
     }
 }
