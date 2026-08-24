@@ -131,6 +131,8 @@ jobs:
     needs: [ check-code-style, check-code, test, compile ]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    outputs:
+      new_release_published: ${{ steps.semantic-release.outputs.new_release_published }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -171,6 +173,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [ 'x86_64-musl', 'aarch64-musl', 'armv7-musleabihf', 'arm-musleabihf' ]
+    if: needs.create-release.outputs.new_release_published == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
