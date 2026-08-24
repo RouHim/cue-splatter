@@ -409,8 +409,8 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
 
     // Verify that ffmpeg can process the input file
     // Example: ffprobe -v error -select_streams a:0 -count_packets -show_entries stream=codec_type,codec_name -of csv=p=0 input_file.mp3
-    let output = Command::new("ffprobe")
-        .args([
+    let output = run_ffprobe(
+        &[
             "-v",
             "error",
             "-select_streams",
@@ -420,10 +420,9 @@ fn verify_cue_files(cue_sheet: &mut CueSheet) -> CueFixAction {
             "stream=codec_type,codec_name",
             "-of",
             "csv=p=0",
-        ])
-        .arg(&cue_sheet.audio_file_path)
-        .output()
-        .expect("Failed to execute command");
+        ],
+        &cue_sheet.audio_file_path,
+    );
     if !output.status.success() {
         eprintln!(
             "❌ ffmpeg failed to process file, most likely the file is corrupt or codec is not supported: {}\nstdout: {}\nstderr: {}",
@@ -704,18 +703,17 @@ fn audio_playtime_matches(entry: &DirEntry, last_track: &Track) -> bool {
 /// Example call: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 input.mp3
 fn read_audio_playtime(entry: &DirEntry) -> Option<u32> {
     // Run ffprobe command
-    let output = Command::new("ffprobe")
-        .args([
+    let output = run_ffprobe(
+        &[
             "-v",
             "error",
             "-show_entries",
             "format=duration",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(entry.path())
-        .output()
-        .expect("Failed to execute command");
+        ],
+        &entry.path(),
+    );
 
     // Check if ffprobe command was successful
     if !output.status.success() {
@@ -993,6 +991,15 @@ fn build_ffmpeg_command(
     }
 }
 
+/// Runs ffprobe with the given arguments on the given audio file.
+fn run_ffprobe(args: &[&str], audio_file_path: &Path) -> std::process::Output {
+    Command::new("ffprobe")
+        .args(args)
+        .arg(audio_file_path)
+        .output()
+        .expect("Failed to execute command")
+}
+
 /// Detects the codec of the audio file associated with the given `CueSheet`.
 ///
 /// This function uses `ffprobe` to determine the codec of the audio file. It constructs
@@ -1004,8 +1011,8 @@ fn build_ffmpeg_command(
 /// A `String` containing the codec name of the audio file.
 fn detect_output_codec(cue_sheet: &CueSheet) -> String {
     // Execute the ffprobe command
-    let output = Command::new("ffprobe")
-        .args([
+    let output = run_ffprobe(
+        &[
             "-v",
             "error",
             "-select_streams",
@@ -1014,10 +1021,9 @@ fn detect_output_codec(cue_sheet: &CueSheet) -> String {
             "stream=codec_name",
             "-of",
             "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(&cue_sheet.audio_file_path)
-        .output()
-        .expect("Failed to execute command");
+        ],
+        &cue_sheet.audio_file_path,
+    );
 
     // Check if the command was successful and return the codec name
     if output.status.success() {
