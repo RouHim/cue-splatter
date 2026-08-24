@@ -61,6 +61,9 @@ struct Track {
     ffmpeg_args: Option<Vec<String>>,
 }
 
+/// Number of CDDA frames per second (1 frame = 1/75 second)
+const CDDA_FRAMES_PER_SECOND: u32 = 75;
+
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
 struct CueDuration {
     minutes: u32,
@@ -911,7 +914,7 @@ fn build_ffmpeg_command(
     let cue_duration = track.start_time.as_ref().unwrap();
 
     // Convert frames to milliseconds (1 CDDA frame = 1/75 second)
-    let milliseconds = cue_duration.frames * 1000 / 75;
+    let milliseconds = cue_duration.frames * 1000 / CDDA_FRAMES_PER_SECOND;
 
     // Convert minutes to hours and remaining minutes
     let hours = cue_duration.minutes / 60;
@@ -927,7 +930,7 @@ fn build_ffmpeg_command(
     let ffmpeg_end_time_value = if index < cue_sheet.tracks.len() - 1 {
         let next_track = &cue_sheet.tracks[index + 1];
         let next_cue_duration = next_track.start_time.as_ref().unwrap();
-        let next_milliseconds = next_cue_duration.frames * 1000 / 75;
+        let next_milliseconds = next_cue_duration.frames * 1000 / CDDA_FRAMES_PER_SECOND;
         let next_hours = next_cue_duration.minutes / 60;
         let next_minutes = next_cue_duration.minutes % 60;
         Some(format!(
