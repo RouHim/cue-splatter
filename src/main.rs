@@ -58,6 +58,7 @@ struct Track {
     start_time: Option<CueDuration>,
     output_file: Option<PathBuf>,
     ffmpeg_command: Option<String>,
+    ffmpeg_args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Copy, Clone, PartialEq)]
@@ -360,16 +361,13 @@ fn create_spinner(multi_progress_bar: &MultiProgress, track: &Track) -> Progress
 /// Runs the ffmpeg command to split the audio file
 /// Returns if the command was successful and the error message
 fn run_ffmpeg_split_command(track: &Track) -> (bool, String) {
-    let ffmpeg_command = track.ffmpeg_command.as_ref().unwrap();
-
     // Make sure all sub dirs exist
     let output_file = track.output_file.as_ref().unwrap();
     let output_dir = output_file.parent().unwrap();
     fs::create_dir_all(output_dir).unwrap();
 
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(ffmpeg_command)
+    let output = Command::new("ffmpeg")
+        .args(track.ffmpeg_args.as_ref().unwrap())
         .output()
         .expect("Failed to execute command");
 
@@ -928,19 +926,22 @@ fn build_ffmpeg_command(
     );
 
     // Calculate the end time based on the next track, if we have the last track, skip this param
-    // let ffmpeg_end_time_param = format!("-to {:02}:{:02}:{:02}.{:03}", hours, minutes, cue_duration.seconds + 30, milliseconds);
-    let ffmpeg_end_time = if index < cue_sheet.tracks.len() - 1 {
+    let ffmpeg_end_time_value = if index < cue_sheet.tracks.len() - 1 {
         let next_track = &cue_sheet.tracks[index + 1];
         let next_cue_duration = next_track.start_time.as_ref().unwrap();
         let next_milliseconds = next_cue_duration.frames * 1000 / 75;
         let next_hours = next_cue_duration.minutes / 60;
         let next_minutes = next_cue_duration.minutes % 60;
-        format!(
-            "-to \"{:02}:{:02}:{:02}.{:03}\"",
+        Some(format!(
+            "{:02}:{:02}:{:02}.{:03}",
             next_hours, next_minutes, next_cue_duration.seconds, next_milliseconds
-        )
+        ))
     } else {
-        "".to_string()
+        None
+    };
+    let ffmpeg_end_time = match &ffmpeg_end_time_value {
+        Some(value) => format!("-to \"{}\"", value),
+        None => String::new(),
     };
 
     let audio_file_path = cue_sheet.audio_file_path.to_str().unwrap();
@@ -948,12 +949,12 @@ fn build_ffmpeg_command(
 
     // For lossless codecs we need to re-encode the audio
     // Lossless codecs such as FLAC or ALAC store the exact number of samples and the sampling rate in their headers.
-    // Thus, we need to re-encode the audio to apply the start and end time.
-    let output_codec_parameter = if ["flac", "alac", "wav", "aiff"].contains(&output_codec) {
-        format!("-c:a {}", output_codec)
+    let codec_argument = if ["flac", "alac", "wav", "aiff"].contains(&output_codec) {
+        output_codec.to_string()
     } else {
-        "-c:a copy".to_string()
+        "copy".to_string()
     };
+    let output_codec_parameter = format!("-c:a {}", codec_argument);
 
     let command = format!(
         "ffmpeg -y -i \"{}\" -map_metadata -1 -ss \"{}\" {} {} \"{}\"",
@@ -964,12 +965,30 @@ fn build_ffmpeg_command(
         output_file_name
     );
 
+    let mut ffmpeg_args: Vec<String> = vec![
+        "-y".to_string(),
+        "-i".to_string(),
+        audio_file_path.to_string(),
+        "-map_metadata".to_string(),
+        "-1".to_string(),
+        "-ss".to_string(),
+        ffmpeg_start_time.clone(),
+    ];
+    if let Some(end_time) = &ffmpeg_end_time_value {
+        ffmpeg_args.push("-to".to_string());
+        ffmpeg_args.push(end_time.clone());
+    }
+    ffmpeg_args.push("-c:a".to_string());
+    ffmpeg_args.push(codec_argument);
+    ffmpeg_args.push(output_file_name.clone());
+
     Track {
         number: track.number,
         title: track.title.clone(),
         artist: track.artist.clone(),
         start_time: track.start_time,
         output_file: Some(PathBuf::from(output_file_name)),
+        ffmpeg_args: Some(ffmpeg_args),
         ffmpeg_command: Some(command),
     }
 }
@@ -1239,6 +1258,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
                     artist: None,
                     output_file: None,
                     ffmpeg_command: None,
+                    ffmpeg_args: None,
                 });
             }
             "TITLE" => {
@@ -1340,6 +1360,168 @@ fn delete_original_audio_files(cue_sheets: Vec<CueSheet>) {
             );
         } else {
             println!("🗑 Deleted file: {}", cue_sheet.audio_file_path.display());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates a cue sheet fixture in an isolated temp directory.
+    /// A single `.cue` file is placed inside so that `is_multi_disc` returns false.
+    fn fixture_cue_sheet(tracks: Vec<Track>) -> CueSheet {
+        let dir = std::env::temp_dir().join(format!("cue_splatter_test_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let cue_file_path = dir.join("album.cue");
+        fs::write(&cue_file_path, b"").unwrap();
+
+        CueSheet {
+            cue_file_path,
+            audio_file_path: dir.join("song.wav"),
+            audio_file_name: "song.wav".to_string(),
+            output_dir: None,
+            title: None,
+            tracks,
+        }
+    }
+
+    fn fixture_track(number: u32, title: &str, start_time: Option<CueDuration>) -> Track {
+        Track {
+            number,
+            title: Some(title.to_string()),
+            artist: None,
+            start_time,
+            ffmpeg_args: None,
+            output_file: None,
+            ffmpeg_command: None,
+        }
+    }
+
+    #[test]
+    fn lossless_codec_last_track_has_no_end_time() {
+        let cue_sheet = fixture_cue_sheet(vec![fixture_track(
+            1,
+            "Song",
+            Some(CueDuration {
+                minutes: 1,
+                seconds: 2,
+                frames: 37, // 37 * 1000 / 75 = 493 ms
+            }),
+        )]);
+        let audio_path = cue_sheet.audio_file_path.to_str().unwrap().to_string();
+
+        let track = build_ffmpeg_command(&cue_sheet, 0, &cue_sheet.tracks[0], "flac");
+
+        let audio_dir = cue_sheet
+            .audio_file_path
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Byte-identical expected string. Note: without an end time the format string
+        // leaves TWO consecutive spaces between the -ss value and the codec parameter.
+        // build_output_name joins the audio file's parent with "." as non-multidisc sub dir.
+        let expected = format!(
+            "ffmpeg -y -i \"{}\" -map_metadata -1 -ss \"00:01:02.493\"  -c:a flac \"{}/./01 Song.wav\"",
+            audio_path, audio_dir
+        );
+
+        assert_eq!(track.ffmpeg_command.as_ref().unwrap(), &expected);
+
+        let command = track.ffmpeg_command.as_ref().unwrap();
+        assert!(command.starts_with("ffmpeg -y -i "));
+        assert!(command.contains("-ss \"00:01:02.493\""));
+        assert!(command.ends_with(&format!("\"{}/./01 Song.wav\"", audio_dir)));
+    }
+
+    #[test]
+    fn non_lossless_codec_track_with_next_track_has_end_time() {
+        let cue_sheet = fixture_cue_sheet(vec![
+            fixture_track(
+                2,
+                "Second",
+                Some(CueDuration {
+                    minutes: 1,
+                    seconds: 2,
+                    frames: 37,
+                }),
+            ),
+            fixture_track(
+                3,
+                "Third",
+                Some(CueDuration {
+                    minutes: 5,
+                    seconds: 10,
+                    frames: 0, // end time "00:05:10.000"
+                }),
+            ),
+        ]);
+        let audio_path = cue_sheet.audio_file_path.to_str().unwrap().to_string();
+
+        let track = build_ffmpeg_command(&cue_sheet, 0, &cue_sheet.tracks[0], "mp3");
+        let audio_dir = cue_sheet
+            .audio_file_path
+            .parent()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let expected = format!(
+            "ffmpeg -y -i \"{}\" -map_metadata -1 -ss \"00:01:02.493\" -to \"00:05:10.000\" -c:a copy \"{}/./02 Second.wav\"",
+            audio_path, audio_dir
+        );
+        assert_eq!(track.ffmpeg_command.as_ref().unwrap(), &expected);
+
+        let command = track.ffmpeg_command.as_ref().unwrap();
+        assert!(command.starts_with("ffmpeg -y -i "));
+        assert!(command.contains("-ss \"00:01:02.493\""));
+        assert!(command.contains("-to \"00:05:10.000\""));
+        assert!(command.ends_with(&format!("\"{}/./02 Second.wav\"", audio_dir)));
+    }
+    #[test]
+    fn ffmpeg_args_render_matches_command_tokens() {
+        let cue_sheet = fixture_cue_sheet(vec![
+            fixture_track(
+                1,
+                "Song",
+                Some(CueDuration {
+                    minutes: 1,
+                    seconds: 2,
+                    frames: 37,
+                }),
+            ),
+            fixture_track(
+                2,
+                "Second",
+                Some(CueDuration {
+                    minutes: 5,
+                    seconds: 10,
+                    frames: 0,
+                }),
+            ),
+        ]);
+
+        for index in 0..cue_sheet.tracks.len() {
+            let track = build_ffmpeg_command(&cue_sheet, index, &cue_sheet.tracks[index], "flac");
+            let args = track.ffmpeg_args.as_ref().unwrap();
+            let command = track
+                .ffmpeg_command
+                .as_ref()
+                .unwrap()
+                .replace('"', "");
+
+            // Each argument must appear in order within the quote-stripped command string.
+            let mut search_from = 0;
+            for arg in args {
+                let position = command[search_from..]
+                    .find(arg.as_str())
+                    .unwrap_or_else(|| panic!("arg {:?} not found in command {:?}", arg, command));
+                search_from += position + arg.len();
+            }
         }
     }
 }
