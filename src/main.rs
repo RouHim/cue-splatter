@@ -349,7 +349,7 @@ fn create_spinner(multi_progress_bar: &MultiProgress, track: &Track) -> Progress
                     .template("{spinner} {wide_msg}")
                     .unwrap(),
             )
-            .with_message(format!("Splitting into: {}", &output_file_name)),
+            .with_message(format!("Splitting into: {}", output_file_name)),
     );
 
     split_command_bar.enable_steady_tick(Duration::from_millis(100));
@@ -662,11 +662,7 @@ fn find_best_match(
     // If they are equal, take the levenshtein result
     if let Some(levenshtein_result) = &levenshtein_result {
         if let Some(hamming_result) = &hamming_result {
-            if levenshtein_result.0 == hamming_result.0 {
-                return Some(levenshtein_result.clone());
-            }
-            // If they differ, take the one with the better score
-            else if levenshtein_result.1 > hamming_result.1 {
+            if levenshtein_result.0 == hamming_result.0 || levenshtein_result.1 > hamming_result.1 {
                 return Some(levenshtein_result.clone());
             } else {
                 return Some(hamming_result.clone());
@@ -675,10 +671,10 @@ fn find_best_match(
     }
 
     // If one is missing but the other is present, return the present one
-    if levenshtein_result.is_some() && hamming_result.is_none() {
-        return Some(levenshtein_result.unwrap());
-    } else if levenshtein_result.is_none() && hamming_result.is_some() {
-        return Some(hamming_result.unwrap());
+    match (&levenshtein_result, &hamming_result) {
+        (Some(lev), None) => return Some(lev.clone()),
+        (None, Some(ham)) => return Some(ham.clone()),
+        _ => {}
     }
 
     yellow_ln!(
@@ -1010,7 +1006,7 @@ fn build_output_name(cue_sheet: &CueSheet, track: &Track) -> String {
     let extension = cue_sheet
         .audio_file_name
         .split('.')
-        .last()
+        .next_back()
         .unwrap_or_else(|| {
             eprintln!(
                 "❌ Could not determine extension for file {}",
@@ -1277,7 +1273,7 @@ fn parse_cue_file(cue_file_path: &PathBuf) -> Option<CueSheet> {
 }
 
 fn parse_cue_duration(cue_line_value: &str, track: &mut Track) -> Option<CueDuration> {
-    let cue_duration = cue_line_value.split(' ').last().unwrap();
+    let cue_duration = cue_line_value.split(' ').next_back().unwrap();
     let cue_duration_split: Vec<&str> = cue_duration.split(':').collect();
     if cue_duration_split.len() != 3 {
         eprintln!(
