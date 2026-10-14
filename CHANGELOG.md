@@ -1,3 +1,10 @@
+## [1.10.31](https://github.com/RouHim/cue-splatter/compare/1.10.30...1.10.31) (2026-10-14)
+
+
+### Bug Fixes
+
+* **ci:** make VERSION detection robust against rate limits ([2f166bb](https://github.com/RouHim/cue-splatter/commit/2f166bb22f3b4544997a6c1b6c8b33f2e1858217))
+
 ## [1.10.30](https://github.com/RouHim/cue-splatter/compare/1.10.29...1.10.30) (2026-10-01)
 
 ## [1.10.29](https://github.com/RouHim/cue-splatter/compare/1.10.28...1.10.29) (2026-09-20)
