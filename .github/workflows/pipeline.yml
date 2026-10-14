@@ -181,9 +181,23 @@ jobs:
 
       - name: Detect and set latest github release VERSION
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           REPO="RouHim/cue-splatter"
-          LATEST_RELEASE=$(curl --silent "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+          LATEST_RELEASE=""
+          for i in 1 2 3 4 5; do
+            LATEST_RELEASE=$(curl --silent --header "Authorization: Bearer $GITHUB_TOKEN" "https://api.github.com/repos/$REPO/releases/latest" | jq -r '.tag_name // empty')
+            if [ -n "$LATEST_RELEASE" ]; then
+              break
+            fi
+            echo "Attempt $i: no release tag yet, retrying in 10s..."
+            sleep 10
+          done
+          if [ -z "$LATEST_RELEASE" ]; then
+            echo "No release found after retries, failing..."
+            exit 1
+          fi
           echo "Latest release is $LATEST_RELEASE"
           echo "VERSION=$LATEST_RELEASE" >> $GITHUB_ENV
 
